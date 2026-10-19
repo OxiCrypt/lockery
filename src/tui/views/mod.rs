@@ -5,6 +5,7 @@ pub mod detail;
 pub mod dialog;
 pub mod edit;
 pub mod form;
+pub mod generator;
 pub mod help;
 pub mod list;
 pub mod picker;

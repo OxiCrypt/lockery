@@ -39,11 +39,16 @@ pub fn render(app: &App, frame: &mut Frame<'_>) {
             }
         }
         Screen::Unlock(u) => views::unlock::render(u, app.busy_message(), frame, body),
-        Screen::Unlocked(u) => match (&u.editor, &u.detail) {
-            (Some(editor), _) => views::edit::render(u, editor, frame, body),
-            (None, Some(_)) => views::detail::render(app, u, frame, body),
-            (None, None) => views::list::render(app, u, frame, body),
-        },
+        Screen::Unlocked(u) => {
+            match (&u.editor, &u.detail) {
+                (Some(editor), _) => views::edit::render(u, editor, frame, body),
+                (None, Some(_)) => views::detail::render(app, u, frame, body),
+                (None, None) => views::list::render(app, u, frame, body),
+            }
+            if let Some(generator) = &u.generator {
+                views::generator::render(generator, frame, body);
+            }
+        }
     }
 
     if let Some(confirm) = &app.confirm {

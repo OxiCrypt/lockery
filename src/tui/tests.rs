@@ -656,3 +656,118 @@ fn delete_vault_needs_name_and_password() {
     assert!(screen(&app, 70, 16).contains("Deleted vault 'work'."));
     assert!(!dir.path().join("work.lockery").exists());
 }
+
+// -- M5: generators -----------------------------------------------------------
+
+/// The value currently suggested by the generator popup.
+fn generated(app: &App) -> String {
+    let super::app::Screen::Unlocked(u) = &app.screen else {
+        panic!("not unlocked")
+    };
+    u.generator
+        .as_ref()
+        .expect("generator open")
+        .value
+        .to_string()
+}
+
+#[test]
+fn ctrl_g_fills_the_password_field() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Char('n'));
+    type_text(&mut app, "Generated");
+    ctrl(&mut app, 'g');
+    assert_eq!(app.mode(), Mode::Generator);
+    let first = generated(&app);
+    assert_eq!(first.chars().count(), 24, "config default length");
+    assert!(screen(&app, 80, 30).contains("very strong"));
+
+    ctrl(&mut app, 'g'); // a new suggestion
+    let value = generated(&app);
+    assert_ne!(value, first);
+
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.mode(), Mode::Edit);
+    ctrl(&mut app, 's');
+    press(&mut app, KeyCode::Char('L'));
+    assert_eq!(find(&reopen(dir.path()), "Generated").password, value);
+}
+
+#[test]
+fn generator_from_the_list_starts_a_new_entry_with_a_passphrase() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Char('g'));
+    assert_eq!(app.mode(), Mode::Generator);
+    press(&mut app, KeyCode::Right); // Type: Password → Passphrase
+    let phrase = generated(&app);
+    assert!(phrase.matches('-').count() >= 5, "{phrase}");
+    assert!(screen(&app, 80, 30).contains("≈ 78 bits"));
+
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.mode(), Mode::Edit);
+    type_text(&mut app, "Phrase entry");
+    ctrl(&mut app, 's');
+    press(&mut app, KeyCode::Char('L'));
+    assert_eq!(find(&reopen(dir.path()), "Phrase entry").password, phrase);
+}
+
+#[test]
+fn generator_options_change_the_value_and_are_remembered() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Char('g'));
+    press(&mut app, KeyCode::Tab); // Length
+    type_text(&mut app, "40"); // 240 > 128, so typing starts over: 4, then 40
+    assert_eq!(generated(&app).chars().count(), 40);
+    press(&mut app, KeyCode::Tab); // a-z
+    press(&mut app, KeyCode::Char(' ')); // off
+    assert!(!generated(&app).chars().any(|c| c.is_ascii_lowercase()));
+
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.mode(), Mode::List);
+    press(&mut app, KeyCode::Char('g'));
+    let again = generated(&app);
+    assert_eq!(again.chars().count(), 40, "length remembered");
+    assert!(
+        !again.chars().any(|c| c.is_ascii_lowercase()),
+        "a-z off remembered"
+    );
+}
+
+#[test]
+fn generator_explains_impossible_options() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Char('g'));
+    press(&mut app, KeyCode::Tab); // Length
+    for _ in 0..4 {
+        press(&mut app, KeyCode::Tab); // to each class toggle in turn
+        press(&mut app, KeyCode::Char(' '));
+    }
+    assert!(screen(&app, 80, 30).contains("Choose at least one kind of character"));
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(
+        app.mode(),
+        Mode::Generator,
+        "nothing to use, so it stays open"
+    );
+}
+
+#[test]
+fn editor_shows_password_strength() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Char('n'));
+    assert!(
+        !screen(&app, 70, 22).contains("Password strength"),
+        "hidden while empty"
+    );
+    press(&mut app, KeyCode::Tab);
+    press(&mut app, KeyCode::Tab); // Password
+    type_text(&mut app, "abc");
+    assert!(screen(&app, 70, 22).contains("very weak"));
+    type_text(&mut app, "-Quartz-Lantern-Velvet-91");
+    assert!(screen(&app, 70, 22).contains("very strong"));
+}

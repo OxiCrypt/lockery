@@ -47,6 +47,17 @@ pub enum RowId {
     Cipher,
     MasterPassword,
     ConfirmName,
+    // Generator
+    GenKind,
+    Length,
+    Lowercase,
+    Uppercase,
+    Digits,
+    Symbols,
+    NoAmbiguous,
+    Words,
+    Separator,
+    Capitalize,
 }
 
 /// A text field that wipes its contents on drop.
@@ -147,6 +158,12 @@ pub enum Widget {
         options: &'static [&'static str],
         selected: usize,
     },
+    /// A whole number in `min..=max`: ←/→ (or -/+) step it, digits type it.
+    Number {
+        value: u16,
+        min: u16,
+        max: u16,
+    },
     /// Activated with Enter or Space; the form reports it to the caller.
     Button,
 }
@@ -200,6 +217,19 @@ impl Row {
         selected: usize,
     ) -> Self {
         Self::new(id, label, Widget::Choice { options, selected })
+    }
+
+    #[must_use]
+    pub fn number(id: RowId, label: impl Into<String>, value: u16, min: u16, max: u16) -> Self {
+        Self::new(
+            id,
+            label,
+            Widget::Number {
+                value: value.clamp(min, max),
+                min,
+                max,
+            },
+        )
     }
 
     #[must_use]
@@ -358,6 +388,13 @@ impl Form {
                 }
                 _ => FormEvent::None,
             },
+            Widget::Number { value, min, max } => match number_input(*value, *min, *max, key) {
+                Some(new) if new != *value => {
+                    *value = new;
+                    FormEvent::Changed(id)
+                }
+                _ => FormEvent::None,
+            },
             Widget::Button => match key.code {
                 KeyCode::Char(' ') | KeyCode::Enter if plain => FormEvent::Activated(id),
                 _ => FormEvent::None,
@@ -392,6 +429,27 @@ impl Form {
     #[must_use]
     pub fn toggle(&self, id: RowId) -> bool {
         matches!(self.row(id).map(|r| &r.widget), Some(Widget::Toggle(true)))
+    }
+
+    /// The value of number row `id` (0 if it isn't a number).
+    #[must_use]
+    pub fn number(&self, id: RowId) -> u16 {
+        match self.row(id).map(|r| &r.widget) {
+            Some(Widget::Number { value, .. }) => *value,
+            _ => 0,
+        }
+    }
+
+    /// Replace the text of row `id` (the old text is wiped).
+    pub fn set_text(&mut self, id: RowId, text: &str) {
+        if let Some(i) = self.index(id)
+            && let Widget::Text(field) = &mut self.rows[i].widget
+        {
+            let fresh = TextField::new(text, field.is_multiline(), field.is_secret());
+            **field = fresh; // dropping the old field wipes it
+            self.dirty = true;
+            self.restyle();
+        }
     }
 
     /// The selected option of choice row `id` (0 if it isn't a choice).
@@ -440,6 +498,28 @@ impl Form {
                 field.style(i == self.focus, masked);
             }
         }
+    }
+}
+
+/// How a key changes a number field. ←/→ and -/+ step by one, clamped to
+/// `min..=max`. Digits type a value: each one is appended, and if that goes
+/// past `max` typing starts over, so "32" can be typed over "24". A typed
+/// value may briefly be below `min` (e.g. the "1" of "16"); the caller
+/// validates before using it. Backspace drops the last digit.
+fn number_input(value: u16, min: u16, max: u16, key: KeyEvent) -> Option<u16> {
+    if !(key.modifiers - KeyModifiers::SHIFT).is_empty() {
+        return None;
+    }
+    match key.code {
+        KeyCode::Right | KeyCode::Char('+') => Some(value.saturating_add(1).clamp(min, max)),
+        KeyCode::Left | KeyCode::Char('-') => Some(value.saturating_sub(1).clamp(min, max)),
+        KeyCode::Backspace => Some(value / 10),
+        KeyCode::Char(c) => {
+            let digit = u16::try_from(c.to_digit(10)?).ok()?;
+            let appended = value.checked_mul(10).and_then(|v| v.checked_add(digit));
+            Some(appended.filter(|&v| v <= max).unwrap_or(digit))
+        }
+        _ => None,
     }
 }
 
@@ -545,6 +625,35 @@ mod tests {
         );
         assert_eq!(form.focused_id(), Some(RowId::AddCustom));
         assert_eq!(form.rows()[5].id, RowId::CustomName(0));
+    }
+
+    #[test]
+    fn number_fields_step_and_type() {
+        let mut form = Form::new(vec![Row::number(RowId::Length, "Length", 24, 4, 128)]);
+        form.input(key(KeyCode::Right));
+        assert_eq!(form.number(RowId::Length), 25);
+        form.input(key(KeyCode::Char('-')));
+        assert_eq!(form.number(RowId::Length), 24);
+        type_text(&mut form, "3"); // 243 > 128: start over
+        type_text(&mut form, "2");
+        assert_eq!(form.number(RowId::Length), 32);
+        form.input(key(KeyCode::Backspace));
+        assert_eq!(
+            form.number(RowId::Length),
+            3,
+            "below min while typing is allowed"
+        );
+        form.input(key(KeyCode::Right));
+        assert_eq!(form.number(RowId::Length), 4, "stepping clamps");
+        assert!(form.dirty);
+    }
+
+    #[test]
+    fn set_text_replaces_contents() {
+        let mut form = sample();
+        form.set_text(RowId::Password, "generated");
+        assert_eq!(form.text(RowId::Password), "generated");
+        assert!(form.dirty);
     }
 
     #[test]

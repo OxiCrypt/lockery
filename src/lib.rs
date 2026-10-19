@@ -6,6 +6,7 @@
 pub mod config;
 pub mod crypto;
 pub mod error;
+pub mod generator;
 pub mod paths;
 pub mod tui;
 pub mod vault;

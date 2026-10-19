@@ -13,8 +13,8 @@ follow in M10.
 | [M2: Entry model, named vaults and CLI](#m2-entry-model-named-vaults-and-cli) | ✅ Done |
 | [M3: TUI core](#m3-tui-core) | ✅ Done |
 | [M4: Editing](#m4-editing) | ✅ Done |
-| [M5: Generators](#m5-generators) | ⏳ Next |
-| [M6: Clipboard](#m6-clipboard) | ⏳ |
+| [M5: Generators](#m5-generators) | ✅ Done |
+| [M6: Clipboard](#m6-clipboard) | ⏳ Next |
 | [M7: CSV import and export](#m7-csv-import-and-export) | ⏳ |
 | [M8: Settings](#m8-settings) | ⏳ |
 | [M9: Hardening and alpha 0.1](#m9-hardening-and-alpha-01) | ⏳ |
@@ -116,13 +116,19 @@ follow in M10.
 
 ## M5: Generators
 
-⏳
+✅ Done
 
-- [ ] Password generator: length, character classes, option to leave out look-alike characters, at least one character from each chosen class (`src/gen/password.rs`)
-- [ ] Passphrase generator from the EFF large wordlist: word count, separator, capitalisation (`src/gen/passphrase.rs`)
-- [ ] Generator screen (`g`), and `Ctrl-g` to generate into the password field while editing
-- [ ] Entropy estimate and zxcvbn strength meter
-- [ ] Tests: lengths, that chosen classes appear, and an even spread of characters
+- [x] Password generator: length 4–128, lowercase/uppercase/digits/symbols, option to avoid look-alikes (`0`/`O`, `1`/`l`/`I`, `|`), at least one character from each chosen kind (`src/generator/password.rs`)
+  - [x] uniform: a draft missing a kind is redrawn rather than patched, so no character is favoured
+- [x] Passphrase generator from the EFF large wordlist: 3–20 words, separator, capitalisation (`src/generator/passphrase.rs`)
+  - [x] wordlist embedded byte-for-byte as EFF publishes it (`src/generator/eff_large_wordlist.txt`, SHA-256 `addd3553…996b903e`)
+- [x] All randomness from the OS, picked by rejection sampling, so there's no modulo bias (`src/generator/mod.rs`)
+- [x] Generator popup (`src/tui/generator.rs`, `src/tui/views/generator.rs`)
+  - [x] `Ctrl-g` in the editor fills in the password field; `g` in the list or detail view starts a new entry with the value
+  - [x] regenerates whenever an option changes; `Ctrl-g` for a fresh suggestion with the same options
+  - [x] options start from the config's `[generator]` section and are remembered for the session
+- [x] Entropy estimate and zxcvbn strength meter in the generator, plus live strength of the password field in the editor (`src/tui/widgets/strength.rs`)
+- [x] Tests: lengths, every chosen kind present, only chosen kinds used, even spread of characters and words, wordlist integrity, the popup driven by keys and checked against the vault on disk
 
 ## M6: Clipboard
 
@@ -165,7 +171,7 @@ follow in M10.
 - [ ] Optional `mlock` of secret memory
 - [ ] Review that every secret is wiped from memory
 - [ ] `cargo audit` and `cargo deny check` clean
-- [ ] README: threat model and EFF wordlist credit
+- [ ] README: threat model (the EFF wordlist credit was added in M5)
 - [ ] Tag `v0.1.0`
 
 ## M10: Passkeys (post-alpha)

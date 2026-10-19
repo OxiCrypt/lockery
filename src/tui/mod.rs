@@ -11,6 +11,7 @@
 pub mod app;
 mod entry_form;
 mod form;
+mod generator;
 pub mod keymap;
 pub mod search;
 mod theme;

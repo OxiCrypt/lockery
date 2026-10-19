@@ -92,4 +92,8 @@ pub enum Error {
 
     #[error("no entry with id {0}")]
     EntryNotFound(uuid::Uuid),
+
+    /// Password/passphrase generator options that can't be satisfied.
+    #[error("{0}")]
+    Generator(String),
 }

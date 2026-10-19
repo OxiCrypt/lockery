@@ -19,7 +19,7 @@ so I'm building one myself, with AI assistance.
 | CSV import (Bitwarden, KeePassXC, Chrome, Firefox) and export (Bitwarden format) | ⏳ Planned |
 | Notes in entries | ✅ Done |
 | Fully keyboard-based navigation, with key hints at the bottom of the screen | ✅ Done |
-| Random password and passphrase generation | ⏳ Planned |
+| Random password and passphrase generation | ✅ Done |
 | Clipboard auto-clearing | ⏳ Planned |
 | Intuitive TUI-based interface | 🟡 Partly done |
 | Named vaults alongside a primary vault | ✅ Done |
@@ -35,11 +35,12 @@ How each finished one works:
 - **Notes:** every entry has a multi-line notes field, plus custom fields (which can be hidden like a password) and tags.
 - **Named vaults:** keep as many vaults as you like next to your primary one. Each has its own master password and settings. Create, rename, delete and switch between them in the app, or use `lockery init <name>` and `lockery <name>`.
 - **Keyboard navigation:** everything is done from the keyboard. The bar at the bottom shows the keys for the current screen, and `?` (or `F1` while typing) lists all of them. Every key binding lives in one table that also produces the hints, so the hints always match what the keys do.
-- **Partly done:** the terminal UI covers vaults and entries; the password generator, clipboard, import/export and settings screens come next.
+- **Generators:** random passwords (length, character kinds, avoiding look-alikes such as 0/O) and passphrases from the EFF wordlist (word count, separator, capitals). `Ctrl-g` in the entry editor fills in the password; `g` in the list starts a new entry with one. Each comes with a strength meter and an entropy estimate, and all randomness comes from the operating system.
+- **Partly done:** the terminal UI covers vaults, entries and the generator; the clipboard, import/export and settings screens come next.
 
 ## Status
 
-Early development; not ready for real passwords yet. You can create vaults and add, edit, search and delete entries in the terminal UI. Copying to the clipboard, the password generator and CSV import/export are still to come.
+Early development; not ready for real passwords yet. You can create vaults, generate passwords, and add, edit, search and delete entries in the terminal UI. Copying to the clipboard and CSV import/export are still to come.
 
 See [ROADMAP.md](ROADMAP.md) for the full milestone plan and progress.
 
@@ -70,3 +71,7 @@ lockery --path FILE    # open the app on a vault file anywhere else
 cargo build --release
 cargo test
 ```
+
+## Credits
+
+Passphrases use the [EFF large wordlist](https://www.eff.org/deeplinks/2016/07/new-wordlists-random-passphrases) by the Electronic Frontier Foundation, licensed under [CC BY 3.0 US](https://creativecommons.org/licenses/by/3.0/us/).

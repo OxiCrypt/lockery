@@ -35,9 +35,10 @@ use zeroize::Zeroizing;
 
 use super::entry_form;
 use super::form::{Form, FormEvent, Row, RowId};
+use super::generator::{GeneratorState, GeneratorTarget};
 use super::keymap::{self, Action, Mode};
 use super::search::Search;
-use crate::config::Config;
+use crate::config::{Config, GeneratorConfig};
 use crate::crypto::calibrate::{self, DEFAULT_TARGET};
 use crate::crypto::{CipherId, KdfParams};
 use crate::error::Error;
@@ -113,6 +114,11 @@ pub struct App {
     pub(super) status: Option<Status>,
     pending: Option<Pending>,
     new_vault_kdf: NewVaultKdf,
+    /// Generator options, starting from the config and remembered for the
+    /// rest of the session.
+    gen_settings: GeneratorConfig,
+    /// Whether the generator last made a passphrase (vs a password).
+    gen_passphrase: bool,
     quit: bool,
     last_activity: Instant,
     /// Time zone timestamps are shown in (UTC in tests, for stable output).
@@ -176,6 +182,8 @@ pub(super) struct UnlockedState {
     pub scroll: Cell<usize>,
     pub detail: Option<DetailState>,
     pub editor: Option<Editor>,
+    /// The generator popup, over the list, detail view or editor.
+    pub generator: Option<GeneratorState>,
 }
 
 pub(super) struct DetailState {
@@ -203,6 +211,7 @@ impl UnlockedState {
             scroll: Cell::new(0),
             detail: None,
             editor: None,
+            generator: None,
         };
         state.refilter();
         state
@@ -271,11 +280,14 @@ impl App {
             status: None,
             pending: None,
             new_vault_kdf: NewVaultKdf::Calibrate,
+            gen_settings: GeneratorConfig::default(),
+            gen_passphrase: false,
             quit: false,
             last_activity: now,
             tz: TimeZone::system(),
             list_height: Cell::new(10),
         };
+        app.gen_settings = app.config.generator.clone();
         match target {
             Some(target) => app.show_unlock(target),
             None => app.show_picker(None),
@@ -333,6 +345,7 @@ impl App {
             Screen::Picker(p) if p.dialog.is_some() => Mode::Dialog,
             Screen::Picker(_) => Mode::Picker,
             Screen::Unlock(_) => Mode::Unlock,
+            Screen::Unlocked(u) if u.generator.is_some() => Mode::Generator,
             Screen::Unlocked(u) if u.editor.is_some() => Mode::Edit,
             Screen::Unlocked(u) if u.detail.is_some() => Mode::Detail,
             Screen::Unlocked(u) if u.searching => Mode::Search,
@@ -413,6 +426,16 @@ impl App {
                 if let Some(c) = plain_char {
                     u.input.push(c);
                     u.error = None;
+                }
+            }
+            Screen::Unlocked(u) if u.generator.is_some() => {
+                let Some(generator) = &mut u.generator else {
+                    return;
+                };
+                match generator.form.input(key) {
+                    FormEvent::Next => generator.form.focus_next(),
+                    FormEvent::Changed(id) => generator.on_change(id),
+                    FormEvent::Activated(_) | FormEvent::None => {}
                 }
             }
             Screen::Unlocked(u) if u.editor.is_some() => {
@@ -590,26 +613,25 @@ impl App {
             return;
         };
 
-        if let Some(editor) = &mut u.editor {
-            match action {
-                Action::NextField => editor.form.focus_next(),
-                Action::PrevField => editor.form.focus_prev(),
-                Action::ToggleRevealInput => editor.form.toggle_reveal(),
-                Action::Save => self.save_entry(),
-                Action::Cancel if editor.form.dirty => {
-                    self.confirm = Some(Confirm {
-                        question: "Discard your changes?".into(),
-                        on_yes: ConfirmAction::DiscardEdit,
-                    });
-                }
-                Action::Cancel => u.editor = None,
-                _ => {}
-            }
+        if u.generator.is_some() {
+            self.generator_action(action);
+            return;
+        }
+        if u.editor.is_some() {
+            self.editor_action(action);
             return;
         }
 
         // Commands shared by the list and the detail view.
         match action {
+            Action::Generate => {
+                u.generator = Some(GeneratorState::new(
+                    &self.gen_settings,
+                    GeneratorTarget::NewEntry,
+                    self.gen_passphrase,
+                ));
+                return;
+            }
             Action::New => {
                 u.editor = Some(Editor {
                     form: entry_form::build(None),
@@ -678,6 +700,57 @@ impl App {
         }
     }
 
+    /// Keys in the generator popup.
+    fn generator_action(&mut self, action: Action) {
+        let Screen::Unlocked(u) = &mut self.screen else {
+            return;
+        };
+        let Some(generator) = &mut u.generator else {
+            return;
+        };
+        match action {
+            Action::NextField => generator.form.focus_next(),
+            Action::PrevField => generator.form.focus_prev(),
+            Action::Regenerate => generator.regenerate(),
+            Action::UseGenerated => self.use_generated(),
+            Action::Cancel => {
+                self.gen_settings = generator.settings();
+                self.gen_passphrase = generator.form.choice(RowId::GenKind) == 1;
+                u.generator = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Keys in the entry editor.
+    fn editor_action(&mut self, action: Action) {
+        let Screen::Unlocked(u) = &mut self.screen else {
+            return;
+        };
+        let Some(editor) = &mut u.editor else { return };
+        match action {
+            Action::Generate => {
+                u.generator = Some(GeneratorState::new(
+                    &self.gen_settings,
+                    GeneratorTarget::Editor,
+                    self.gen_passphrase,
+                ));
+            }
+            Action::NextField => editor.form.focus_next(),
+            Action::PrevField => editor.form.focus_prev(),
+            Action::ToggleRevealInput => editor.form.toggle_reveal(),
+            Action::Save => self.save_entry(),
+            Action::Cancel if editor.form.dirty => {
+                self.confirm = Some(Confirm {
+                    question: "Discard your changes?".into(),
+                    on_yes: ConfirmAction::DiscardEdit,
+                });
+            }
+            Action::Cancel => u.editor = None,
+            _ => {}
+        }
+    }
+
     /// Ctrl-s in the editor: validate and save, then show the saved entry.
     fn save_entry(&mut self) {
         let Screen::Unlocked(u) = &mut self.screen else {
@@ -712,6 +785,43 @@ impl App {
             // The vault (memory and disk) is unchanged; keep the form open.
             Err(e) => self.set_status(StatusKind::Error, format!("Not saved: {e}")),
         }
+    }
+
+    /// Enter in the generator: put the value where it was asked for.
+    fn use_generated(&mut self) {
+        let Screen::Unlocked(u) = &mut self.screen else {
+            return;
+        };
+        let Some(generator) = u.generator.take() else {
+            return;
+        };
+        self.gen_settings = generator.settings();
+        self.gen_passphrase = generator.form.choice(RowId::GenKind) == 1;
+        if !generator.has_value() {
+            // Nothing to use; keep the popup open so the options can be fixed.
+            u.generator = Some(generator);
+            return;
+        }
+
+        match generator.target {
+            GeneratorTarget::Editor => {
+                if let Some(editor) = &mut u.editor {
+                    editor.form.set_text(RowId::Password, &generator.value);
+                    editor.form.focus_row(RowId::Password);
+                }
+            }
+            GeneratorTarget::NewEntry => {
+                let mut form = entry_form::build(None);
+                form.set_text(RowId::Password, &generator.value);
+                u.detail = None;
+                u.editor = Some(Editor { form, id: None });
+            }
+        }
+        self.set_status(
+            StatusKind::Info,
+            "Generated value filled in; it's saved with the entry.",
+        );
+        // `generator` drops here, wiping its copy of the value.
     }
 
     /// Handle y/n on a confirmation.

@@ -27,6 +27,8 @@ pub enum Mode {
     Edit,
     /// A small form over the vault picker (create, rename, delete vault).
     Dialog,
+    /// The password/passphrase generator popup.
+    Generator,
     /// A yes/no question.
     Confirm,
     /// The help overlay is open.
@@ -39,12 +41,12 @@ impl Mode {
     pub const fn is_text_entry(self) -> bool {
         matches!(
             self,
-            Self::Unlock | Self::Search | Self::Edit | Self::Dialog
+            Self::Unlock | Self::Search | Self::Edit | Self::Dialog | Self::Generator
         )
     }
 
     /// Every mode, for tests and the help overlay.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Picker,
         Self::Unlock,
         Self::List,
@@ -52,6 +54,7 @@ impl Mode {
         Self::Detail,
         Self::Edit,
         Self::Dialog,
+        Self::Generator,
         Self::Confirm,
         Self::Help,
     ];
@@ -92,6 +95,12 @@ pub enum Action {
     New,
     /// Edit the selected entry.
     Edit,
+    /// Open the password generator.
+    Generate,
+    /// Generate a new suggestion with the same options.
+    Regenerate,
+    /// Use the generated value (in the editor, or for a new entry).
+    UseGenerated,
     /// Rename the selected vault.
     Rename,
     /// Delete the selected entry or vault (after confirmation).
@@ -177,7 +186,7 @@ pub struct Binding {
     pub show: Show,
 }
 
-use Mode::{Confirm, Detail, Dialog, Edit, Help, List, Picker, Search, Unlock};
+use Mode::{Confirm, Detail, Dialog, Edit, Generator, Help, List, Picker, Search, Unlock};
 use Show::{Footer, Hidden};
 
 /// All key bindings. Order matters: it is the order of the hints, so the
@@ -245,8 +254,8 @@ pub static BINDINGS: &[Binding] = &[
         show: Hidden,
     },
     Binding {
-        keys: &[Key::plain(KeyCode::Home), Key::char('g')],
-        label: "g/G",
+        keys: &[Key::plain(KeyCode::Home)],
+        label: "Home/End",
         description: "First/last",
         action: Action::Top,
         modes: &[Picker, List],
@@ -313,17 +322,17 @@ pub static BINDINGS: &[Binding] = &[
     Binding {
         keys: &[Key::plain(KeyCode::Tab)],
         label: "Tab",
-        description: "Next field",
+        description: "Next",
         action: Action::NextField,
-        modes: &[Edit, Dialog],
+        modes: &[Edit, Dialog, Generator],
         show: Footer,
     },
     Binding {
         keys: &[Key::plain(KeyCode::BackTab)],
         label: "Shift-Tab",
-        description: "Previous",
+        description: "Back",
         action: Action::PrevField,
-        modes: &[Edit, Dialog],
+        modes: &[Edit, Dialog, Generator],
         show: Footer,
     },
     Binding {
@@ -332,6 +341,38 @@ pub static BINDINGS: &[Binding] = &[
         description: "Save",
         action: Action::Save,
         modes: &[Edit],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::ctrl('g')],
+        label: "Ctrl-g",
+        description: "Generate",
+        action: Action::Generate,
+        modes: &[Edit],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::plain(KeyCode::Enter)],
+        label: "Enter",
+        description: "Use",
+        action: Action::UseGenerated,
+        modes: &[Generator],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::ctrl('g')],
+        label: "Ctrl-g",
+        description: "New",
+        action: Action::Regenerate,
+        modes: &[Generator],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::plain(KeyCode::Esc)],
+        label: "Esc",
+        description: "Close",
+        action: Action::Cancel,
+        modes: &[Generator],
         show: Footer,
     },
     Binding {
@@ -427,6 +468,16 @@ pub static BINDINGS: &[Binding] = &[
         modes: &[List, Detail, Picker],
         show: Footer,
     },
+    // The footer has no room left in the list and detail views; it's in
+    // the help overlay, and Ctrl-g in the editor is in that footer.
+    Binding {
+        keys: &[Key::char('g')],
+        label: "g",
+        description: "Password generator",
+        action: Action::Generate,
+        modes: &[List, Detail],
+        show: Show::Help,
+    },
     // -- Secrets --------------------------------------------------------------
     Binding {
         keys: &[Key::char(' ')],
@@ -509,7 +560,7 @@ pub static BINDINGS: &[Binding] = &[
         label: "F1",
         description: "Help",
         action: Action::Help,
-        modes: &[Unlock, Search, Edit, Dialog],
+        modes: &[Unlock, Search, Edit, Dialog, Generator],
         show: Footer,
     },
     Binding {

@@ -92,6 +92,21 @@ pub fn render(form: &Form, frame: &mut Frame<'_>, area: Rect, label_width: u16) 
                     value_area,
                 );
             }
+            Widget::Number { value, .. } => {
+                let style = if focused {
+                    theme::SELECTED
+                } else {
+                    theme::HINT
+                };
+                frame.render_widget(
+                    Line::from(vec![
+                        Span::styled("‹ ", theme::DIM),
+                        Span::styled(value.to_string(), style),
+                        Span::styled(" ›", theme::DIM),
+                    ]),
+                    value_area,
+                );
+            }
             Widget::Button => {
                 // Buttons span the whole row; the label is the button text.
                 let style = if focused {
