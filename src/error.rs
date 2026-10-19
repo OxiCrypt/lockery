@@ -69,4 +69,27 @@ pub enum Error {
     /// No home directory could be determined, so default paths are unknown.
     #[error("could not determine the user's home directory")]
     NoHomeDir,
+
+    /// A vault name that isn't 1-64 characters of `[A-Za-z0-9_-]`.
+    #[error("invalid vault name {0:?}: use 1 to 64 letters, digits, '-' or '_'")]
+    InvalidVaultName(String),
+
+    #[error("a vault already exists at {}", .0.display())]
+    VaultExists(PathBuf),
+
+    #[error("no vault found at {}", .0.display())]
+    VaultNotFound(PathBuf),
+
+    /// The decrypted payload uses a schema newer than this build knows.
+    /// Refusing (rather than ignoring unknown fields) prevents an old Lockery
+    /// from silently dropping data the next time it saves.
+    #[error("vault uses data schema version {0}, which is newer than this Lockery supports")]
+    UnsupportedSchema(u32),
+
+    /// The decrypted payload couldn't be (de)serialised.
+    #[error("vault contents are invalid: {0}")]
+    Payload(String),
+
+    #[error("no entry with id {0}")]
+    EntryNotFound(uuid::Uuid),
 }

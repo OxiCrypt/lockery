@@ -1,33 +1,180 @@
 //! Binary entry point: parse arguments, load config, dispatch.
 //!
-//! Real behaviour lands milestone by milestone; until then each command says
-//! which milestone will implement it.
+//! Until the TUI lands (M3), opening a vault unlocks it and prints a short
+//! summary, which proves the password and file are good.
 
 mod cli;
+mod prompt;
+
+use std::path::PathBuf;
 
 use anyhow::{Context, bail};
 use clap::Parser;
 use lockery::config::Config;
+use lockery::crypto::calibrate::{self, DEFAULT_TARGET};
+use lockery::crypto::{CipherId, KdfParams};
+use lockery::paths::{self, VaultName};
+use lockery::vault::Vault;
+use lockery::vault::format::CURRENT_FORMAT_VERSION;
 
-use crate::cli::{Cli, Command};
+use crate::cli::{Cli, Command, InitArgs};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let config = Config::load().context("failed to load configuration")?;
 
     match cli.command {
-        Some(Command::Init { .. }) => bail!("`lockery init` is not implemented yet (milestone M2)"),
-        Some(Command::List) => bail!("`lockery list` is not implemented yet (milestone M2)"),
+        Some(Command::Init(args)) => init(&config, &args),
+        Some(Command::List) => list(&config),
         Some(Command::Import { .. }) => {
             bail!("`lockery import` is not implemented yet (milestone M7)")
         }
-        None => {
-            let target = cli
-                .path
-                .map(|p| p.display().to_string())
-                .or(cli.name)
-                .unwrap_or(config.primary_vault);
-            bail!("opening vault `{target}` is not implemented yet (milestones M2/M3)")
-        }
+        None => open(&config, cli.name.as_deref(), cli.path),
     }
+}
+
+/// `lockery init [NAME]`: create a new vault.
+fn init(config: &Config, args: &InitArgs) -> anyhow::Result<()> {
+    let name = vault_name(config, args.name.as_deref())?;
+    let dir = paths::data_dir()?;
+    let path = name.path_in(&dir);
+    if path.exists() {
+        bail!("vault '{name}' already exists at {}", path.display());
+    }
+
+    let kdf = if args.has_manual_kdf() {
+        manual_kdf(args)?
+    } else {
+        eprintln!("Calibrating Argon2 for this machine (takes a few seconds)...");
+        calibrate::calibrate(DEFAULT_TARGET)?
+    };
+    let cipher = CipherId::from(args.cipher);
+
+    let password = prompt::password(&format!("New master password for '{name}': "))?;
+    if password.is_empty() {
+        bail!("the master password can't be empty");
+    }
+    if *prompt::password("Repeat master password: ")? != *password {
+        bail!("passwords don't match; nothing was created");
+    }
+    let strength = zxcvbn::zxcvbn(&password, &[name.as_str()]);
+    if strength.score() < zxcvbn::Score::Three
+        && !prompt::confirm("That password is easy to guess. Use it anyway?")?
+    {
+        bail!("cancelled; nothing was created");
+    }
+
+    paths::ensure_dir(&dir)?;
+    let vault = Vault::create(&path, password.as_bytes(), kdf, cipher)?;
+
+    println!("Created vault '{name}' at {}", vault.path().display());
+    println!("  {}", describe_crypto(&vault));
+    // The name is the file name, so it is not encrypted.
+    println!("Note: vault names are visible in the file name; the contents are encrypted.");
+    Ok(())
+}
+
+/// Build Argon2 parameters from `--memory-mib/--iterations/--parallelism`,
+/// filling in defaults for any that weren't given.
+fn manual_kdf(args: &InitArgs) -> anyhow::Result<KdfParams> {
+    let d = KdfParams::DEFAULT;
+    let m_cost_kib = match args.memory_mib {
+        Some(mib) => mib.checked_mul(1024).context("--memory-mib is too large")?,
+        None => d.m_cost_kib(),
+    };
+    Ok(KdfParams::new(
+        m_cost_kib,
+        args.iterations.unwrap_or(d.t_cost()),
+        args.parallelism.unwrap_or(d.p_cost()),
+    )?)
+}
+
+/// `lockery list`: show the vaults in the data directory.
+fn list(config: &Config) -> anyhow::Result<()> {
+    let dir = paths::data_dir()?;
+    let names = paths::list_vaults(&dir)?;
+    if names.is_empty() {
+        println!(
+            "No vaults in {} yet. Create one with `lockery init`.",
+            dir.display()
+        );
+        return Ok(());
+    }
+    for name in names {
+        let marker = if name.as_str() == config.primary_vault {
+            "  (primary)"
+        } else {
+            ""
+        };
+        println!("{name}{marker}");
+    }
+    Ok(())
+}
+
+/// `lockery [NAME]` / `lockery --path FILE`: unlock a vault.
+fn open(config: &Config, name: Option<&str>, path: Option<PathBuf>) -> anyhow::Result<()> {
+    let (label, path) = if let Some(path) = path {
+        (path.display().to_string(), path)
+    } else {
+        let name = vault_name(config, name)?;
+        let path = name.path_in(&paths::data_dir()?);
+        if !path.exists() {
+            let init = if name.as_str() == config.primary_vault {
+                "lockery init".to_owned()
+            } else {
+                format!("lockery init {name}")
+            };
+            bail!("vault '{name}' doesn't exist yet; create it with `{init}`");
+        }
+        (name.to_string(), path)
+    };
+
+    let password = prompt::password(&format!("Master password for '{label}': "))?;
+    let vault = Vault::unlock(&path, password.as_bytes())?;
+    drop(password);
+
+    if let Some(aside) = vault.recovered_from_backup() {
+        eprintln!(
+            "Warning: the vault file was damaged and has been restored from its backup.\n\
+             The most recent change may be missing. The damaged file was kept at {}",
+            aside.display()
+        );
+    }
+    let count = vault.entries().len();
+    println!(
+        "Unlocked '{label}': {count} {}.",
+        if count == 1 { "entry" } else { "entries" }
+    );
+    println!("  {}", describe_crypto(&vault));
+    if vault.opened_format_version() < CURRENT_FORMAT_VERSION {
+        println!("  This vault uses an older file format and will be upgraded on the next save.");
+    }
+    println!("The interactive interface arrives in milestone M3.");
+    Ok(())
+}
+
+/// The vault name given on the command line, or the configured primary one.
+fn vault_name(config: &Config, name: Option<&str>) -> anyhow::Result<VaultName> {
+    let raw = name.unwrap_or(&config.primary_vault);
+    VaultName::parse(raw).with_context(|| {
+        if name.is_none() {
+            "the `primary_vault` setting in the config file is not a valid vault name".to_owned()
+        } else {
+            "check the vault name".to_owned()
+        }
+    })
+}
+
+/// e.g. "XChaCha20-Poly1305, Argon2id 256 MiB × 3 passes × 4 lanes"
+fn describe_crypto(vault: &Vault) -> String {
+    let kdf = vault.kdf();
+    format!(
+        "{}, Argon2id {} MiB × {} {} × {} {}",
+        vault.cipher().name(),
+        kdf.m_cost_kib() / 1024,
+        kdf.t_cost(),
+        if kdf.t_cost() == 1 { "pass" } else { "passes" },
+        kdf.p_cost(),
+        if kdf.p_cost() == 1 { "lane" } else { "lanes" },
+    )
 }

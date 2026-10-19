@@ -6,6 +6,7 @@
 pub mod config;
 pub mod crypto;
 pub mod error;
+pub mod paths;
 pub mod vault;
 
 pub use error::{Error, Result};

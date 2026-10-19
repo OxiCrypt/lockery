@@ -4,6 +4,9 @@
 //! `tests/fixtures/`. These files must keep opening forever. Once a version
 //! has been released its fixtures must NEVER be regenerated; add new files
 //! for new versions instead.
+//!
+//! Two kinds of fixture exist: `v<N>-*.lockery` pin the *file format*
+//! (opaque payload), `schema-v<N>.lockery` pin the *entry schema*.
 
 use std::path::{Path, PathBuf};
 
@@ -60,5 +63,83 @@ fn write_v1_fixtures() {
     for (name, cipher) in v1_fixtures() {
         let bytes = format::seal(&key, cipher, V1_PAYLOAD).unwrap();
         std::fs::write(fixture(name), bytes).unwrap();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Schema (entry model) fixtures
+// ---------------------------------------------------------------------------
+
+mod schema {
+    use jiff::Timestamp;
+    use lockery::crypto::{CipherId, KdfParams, VaultKey};
+    use lockery::vault::format;
+    use lockery::vault::migrate;
+    use lockery::vault::{CustomField, Entry, EntryKind, VaultData};
+    use uuid::Uuid;
+
+    use super::{PASSWORD, fixture};
+
+    const SCHEMA_V1: &str = "schema-v1.lockery";
+
+    /// The entries stored in `schema-v1.lockery`. Fixed ids and timestamps,
+    /// so they can be compared exactly. Covers every field of schema 1.
+    fn v1_entries() -> Vec<Entry> {
+        let t = |s| Timestamp::from_second(s).unwrap();
+
+        let mut login = Entry::new(EntryKind::Login, "Example Mail");
+        login.id = Uuid::from_u128(1);
+        login.username = "alice@example.com".into();
+        login.password = "pässwörd-🔒-123".into();
+        login.urls = vec!["https://mail.example.com".into(), "imap.example.com".into()];
+        login.notes = "Recovery codes:\n  1111-2222\n  3333-4444".into();
+        login.tags = vec!["email".into(), "personal".into()];
+        login.custom_fields = vec![
+            CustomField {
+                name: "PIN".into(),
+                value: "0420".into(),
+                hidden: true,
+            },
+            CustomField {
+                name: "Account no.".into(),
+                value: "12345".into(),
+                hidden: false,
+            },
+        ];
+        login.totp = "otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP".into();
+        login.favorite = true;
+        login.created = t(1_700_000_000);
+        login.modified = t(1_750_000_000);
+
+        let mut note = Entry::new(EntryKind::Note, "Wi-Fi");
+        note.id = Uuid::from_u128(2);
+        note.notes = "SSID: home\nKey: correct horse".into();
+        note.created = t(1_760_000_000);
+        note.modified = t(1_760_000_000);
+
+        vec![login, note]
+    }
+
+    #[test]
+    fn schema_v1_fixture_still_loads() {
+        let bytes = std::fs::read(fixture(SCHEMA_V1)).unwrap();
+        let opened = format::open(PASSWORD, &bytes).unwrap();
+        let data = migrate::decode(&opened.plaintext).unwrap();
+        assert_eq!(data.schema_version, 1);
+        assert_eq!(data.entries, v1_entries());
+    }
+
+    /// Writes `schema-v1.lockery`. Only for introducing schema 1:
+    /// `cargo test --test format_compat -- --ignored write_schema_v1_fixture`
+    #[test]
+    #[ignore = "regenerates committed fixtures; never run after schema 1 is released"]
+    fn write_schema_v1_fixture() {
+        let kdf = KdfParams::new(KdfParams::MIN_M_COST_KIB, 1, 1).unwrap();
+        let key = VaultKey::derive_new(PASSWORD, kdf).unwrap();
+        let mut data = VaultData::new();
+        data.entries = v1_entries();
+        let plaintext = migrate::encode(&data).unwrap();
+        let bytes = format::seal(&key, CipherId::XChaCha20Poly1305, &plaintext).unwrap();
+        std::fs::write(fixture(SCHEMA_V1), bytes).unwrap();
     }
 }

@@ -4,6 +4,8 @@
 //! This module knows nothing about the vault file layout; `vault::format`
 //! decides what gets authenticated and encrypted, and calls into here.
 
+pub mod calibrate;
+
 use std::fmt;
 
 use aes_gcm::Aes256Gcm;
