@@ -1,0 +1,70 @@
+[package]
+name = "lockery"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89" # std::fs::File::try_lock
+description = "A keyboard-driven terminal password manager"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+# --- Cryptography -----------------------------------------------------------
+# Default features pull in `password-hash` (PHC strings), which we don't need.
+# `parallel` lets p_cost > 1 actually use multiple threads.
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "parallel", "zeroize"] }
+chacha20poly1305 = { version = "0.11.0", features = ["zeroize"] }
+aes-gcm = { version = "0.11.1", features = ["zeroize"] }
+rand = "0.10.3"
+zeroize = { version = "1.9.1", features = ["derive"] }
+secrecy = "0.10.3"
+
+# --- Data / config -----------------------------------------------------------
+serde = { version = "1.0.229", features = ["derive"] }
+ciborium = "0.2.2"
+toml = "1.1.8"
+directories = "6.0.0"
+uuid = { version = "1.28.0", features = ["v4", "serde"] }
+jiff = { version = "0.2.38", features = ["serde"] }
+csv = "1.4.0"
+
+# --- Storage -----------------------------------------------------------------
+tempfile = "3.27.0"
+
+# --- TUI ---------------------------------------------------------------------
+ratatui = "0.30.2"
+crossterm = "0.29.0"
+ratatui-textarea = "0.9.3"
+nucleo-matcher = "0.3.1"
+arboard = { version = "3.7.0", features = ["wayland-data-control"] }
+zxcvbn = "3.1.1"
+
+# --- CLI / errors ------------------------------------------------------------
+clap = { version = "4.6.7", features = ["derive"] }
+thiserror = "2.0.21"
+anyhow = "1.0.104"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.191"
+# 0.3 to share the copy crossterm already depends on.
+signal-hook = "0.3.18"
+
+[dev-dependencies]
+assert_cmd = "2.2.2"
+insta = "1.49.0"
+proptest = "1.12.0"
+tempfile = "3.27.0"
+
+# Argon2 is painfully slow without optimisations, which makes debug builds
+# and `cargo test` crawl. Optimise just the hashing crates in dev/test.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+
+[lints.rust]
+# Unsafe is only expected for a handful of libc calls (core dumps, mlock) in
+# M9; those sites will opt in with a local `#[allow(unsafe_code)]`.
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }

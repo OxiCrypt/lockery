@@ -1,0 +1,26 @@
+# Fuzz targets, run with cargo-fuzz (needs a nightly toolchain):
+#   mkdir -p fuzz/corpus/header_decode && cp tests/fixtures/*.lockery fuzz/corpus/header_decode/
+#   cargo +nightly fuzz run header_decode -- -max_total_time=300 -max_len=8192
+[package]
+name = "lockery-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+lockery = { path = ".." }
+
+# Keep the fuzz crate out of the main workspace.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "header_decode"
+path = "fuzz_targets/header_decode.rs"
+test = false
+doc = false
+bench = false

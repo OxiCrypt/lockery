@@ -1,0 +1,8 @@
+/target
+
+# cargo-fuzz output
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
+/fuzz/coverage
+/fuzz/Cargo.lock

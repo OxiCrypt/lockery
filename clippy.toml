@@ -1,0 +1,4 @@
+# Product names that clippy::doc_markdown would otherwise want in backticks
+# (doc comments on CLI args double as `--help` text, where backticks show).
+# ".." keeps clippy's built-in list.
+doc-valid-idents = ["KeePassXC", ".."]

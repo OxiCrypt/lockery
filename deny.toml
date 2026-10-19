@@ -1,0 +1,44 @@
+# cargo-deny configuration: `cargo deny check`
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Check the dependency graph for every platform we ship on.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+all-features = true
+
+[advisories]
+# A password manager should not ship with known-vulnerable or unmaintained
+# crates. Every exception goes here with a reason.
+yanked = "deny"
+ignore = []
+
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "MPL-2.0",        # nucleo-matcher, option-ext (file-level copyleft, fine for us)
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "0BSD",
+]
+
+[bans]
+# Duplicates are common in a TUI dependency tree; flag them, don't fail.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
