@@ -143,7 +143,7 @@ follow in M10.
 - [x] Tests with an in-memory clipboard: timeout, a new copy restarting it, leaving the user's own copies alone, lock and quit clearing, errors
 - [x] Manual test on Wayland (Hyprland): copy, history hint, timeout, quit and SIGTERM all clear
 - [ ] Manual test on X11, macOS and Windows
-- [ ] Panic path tested only through its pieces (the shared copy and the clear function), not with a real crash
+- [x] Panic path tested by hand on Wayland: a deliberate crash with the normal clear-on-exit disabled, so only the panic hook could clear the clipboard; it did, and a control run with the hook switched off left the password there (the temporary debug-only trigger was not kept)
 
 ## M7: CSV import and export
 
