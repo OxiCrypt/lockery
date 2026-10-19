@@ -338,6 +338,32 @@ pub fn derive_key(password: &[u8], salt: &[u8; SALT_LEN], params: KdfParams) -> 
     Ok(key)
 }
 
+/// A one-line summary, e.g. "XChaCha20-Poly1305, Argon2id 256 MiB × 3 passes ×
+/// 4 lanes".
+#[must_use]
+pub fn describe(cipher: CipherId, kdf: KdfParams) -> String {
+    let plural = |n: u32, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    format!(
+        "{}, Argon2id {} MiB × {} × {}",
+        cipher.name(),
+        kdf.m_cost_kib() / 1024,
+        plural(kdf.t_cost(), "pass", "passes"),
+        plural(kdf.p_cost(), "lane", "lanes"),
+    )
+}
+
+/// Compare two keys in constant time: every byte is looked at, whatever
+/// the first difference, so the time taken says nothing about the key.
+#[must_use]
+pub fn keys_equal(a: &Key, b: &Key) -> bool {
+    let diff = a
+        .iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y));
+    // Stop the optimiser from turning the fold into an early-exit compare.
+    std::hint::black_box(diff) == 0
+}
+
 /// A derived key bundled with the salt and parameters that produced it.
 ///
 /// Keeping these together lets us save repeatedly without re-running Argon2
@@ -477,6 +503,15 @@ mod tests {
                 Err(Error::Crypto(_))
             ));
         }
+    }
+
+    #[test]
+    fn keys_equal_compares_every_byte() {
+        let a: Key = Zeroizing::new([1u8; KEY_LEN]);
+        let mut b: Key = Zeroizing::new([1u8; KEY_LEN]);
+        assert!(keys_equal(&a, &b));
+        b[KEY_LEN - 1] = 2; // differs only in the last byte
+        assert!(!keys_equal(&a, &b));
     }
 
     #[test]

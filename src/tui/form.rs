@@ -47,6 +47,11 @@ pub enum RowId {
     Cipher,
     MasterPassword,
     ConfirmName,
+    // Vault settings
+    MemoryMib,
+    Iterations,
+    Parallelism,
+    Calibrate,
     // Generator
     GenKind,
     Length,
@@ -437,6 +442,16 @@ impl Form {
         match self.row(id).map(|r| &r.widget) {
             Some(Widget::Number { value, .. }) => *value,
             _ => 0,
+        }
+    }
+
+    /// Set number row `id` (clamped to its range).
+    pub fn set_number(&mut self, id: RowId, new: u16) {
+        if let Some(i) = self.index(id)
+            && let Widget::Number { value, min, max } = &mut self.rows[i].widget
+        {
+            *value = new.clamp(*min, *max);
+            self.dirty = true;
         }
     }
 

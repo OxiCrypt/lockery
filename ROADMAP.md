@@ -16,7 +16,7 @@ follow in M10.
 | [M5: Generators](#m5-generators) | ✅ Done |
 | [M6: Clipboard](#m6-clipboard) | ⏳ Next |
 | [M7: CSV import and export](#m7-csv-import-and-export) | ⏳ |
-| [M8: Settings](#m8-settings) | ⏳ |
+| [M8: Settings](#m8-settings) | ✅ Done (ahead of M6–M7) |
 | [M9: Hardening and alpha 0.1](#m9-hardening-and-alpha-01) | ⏳ |
 | [M10: Passkeys](#m10-passkeys-post-alpha) | ⏳ After alpha |
 
@@ -156,12 +156,16 @@ follow in M10.
 
 ## M8: Settings
 
-⏳
+✅ Done (built before M6 and M7)
 
-- [ ] Change master password
-- [ ] Change Argon2 settings, with calibration
-- [ ] Switch cipher
-- [ ] Each change re-encrypts and saves the vault
+- [x] Settings screen (`s` from the list or detail view): cipher, Argon2 memory/passes/lanes, new master password (`src/tui/settings.rs`, `src/tui/views/settings.rs`)
+- [x] "Tune Argon2 for this machine" button, using the same calibration as `lockery init`
+- [x] Every change needs the current master password, compared in constant time, so an unattended unlocked vault can't be taken over
+- [x] Applying re-encrypts the vault with a fresh salt (`Vault::rekey` in `src/vault/session.rs`)
+  - [x] then saves a second time, so the `.bak` copy is re-encrypted too and stops opening with an old, possibly leaked, password
+  - [x] a wrong current password, or any failure before the first save, changes nothing
+- [x] Same validation as vault creation: new passwords must match, and an easy-to-guess one needs a second Ctrl-s; Argon2 values stay within the allowed range
+- [x] Tests: re-keying (password, Argon2, cipher, backup) at library level; the screen driven by keys and checked against the vault and backup on disk
 
 ## M9: Hardening and alpha 0.1
 

@@ -27,8 +27,8 @@ so I'm building one myself, with AI assistance.
 
 How each finished one works:
 
-- **Argon2:** the memory, iteration and thread costs are chosen per vault. They're limited to sane bounds, so a damaged or malicious file can't use up all your memory.
-- **Ciphers:** each vault picks XChaCha20-Poly1305 or AES-256-GCM.
+- **Argon2:** the memory, iteration and thread costs are chosen per vault: tuned automatically when the vault is created, and changeable later in the settings screen (`s`). They're limited to sane bounds, so a damaged or malicious file can't use up all your memory.
+- **Ciphers:** each vault uses XChaCha20-Poly1305 or AES-256-GCM, chosen when it's created and switchable in the settings screen. Changing the cipher, the Argon2 settings or the master password re-encrypts the vault and its backup, and always needs the current master password.
 - **Backwards compatibility:** every vault file records its format version, and support for old versions is never removed. A test vault from each released version is kept in the repo, and the test suite checks it still opens.
 - **Metadata encryption:** titles, usernames, URLs, notes, timestamps and even the number of entries are all encrypted. Only the encryption settings are visible, and they're tamper-proof. Vault contents are padded so a vault's size gives little away.
 - **Crash safety:** saves are atomic, so the vault file is never half-written. A new save is checked to decrypt before it replaces the old file, a `.bak` copy of the previous version is kept, and two instances can't open the same vault at once. Every change is saved the moment it's made. If the vault file is ever damaged, Lockery restores it from the `.bak` copy and keeps the damaged file. The terminal is restored even if Lockery crashes. Still to come: clearing the clipboard on a crash (M6).
@@ -36,7 +36,7 @@ How each finished one works:
 - **Named vaults:** keep as many vaults as you like next to your primary one. Each has its own master password and settings. Create, rename, delete and switch between them in the app, or use `lockery init <name>` and `lockery <name>`.
 - **Keyboard navigation:** everything is done from the keyboard. The bar at the bottom shows the keys for the current screen, and `?` (or `F1` while typing) lists all of them. Every key binding lives in one table that also produces the hints, so the hints always match what the keys do.
 - **Generators:** random passwords (length, character kinds, avoiding look-alikes such as 0/O) and passphrases from the EFF wordlist (word count, separator, capitals). `Ctrl-g` in the entry editor fills in the password; `g` in the list starts a new entry with one. Each comes with a strength meter and an entropy estimate, and all randomness comes from the operating system.
-- **Partly done:** the terminal UI covers vaults, entries and the generator; the clipboard, import/export and settings screens come next.
+- **Partly done:** the terminal UI covers vaults, entries, the generator and settings; the clipboard and import/export come next.
 
 ## Status
 

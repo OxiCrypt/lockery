@@ -14,6 +14,7 @@ mod form;
 mod generator;
 pub mod keymap;
 pub mod search;
+mod settings;
 mod theme;
 mod ui;
 mod views;

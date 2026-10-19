@@ -771,3 +771,116 @@ fn editor_shows_password_strength() {
     type_text(&mut app, "-Quartz-Lantern-Velvet-91");
     assert!(screen(&app, 70, 22).contains("very strong"));
 }
+
+// -- M8: vault settings -------------------------------------------------------
+
+/// From the first settings field (Cipher) to the others:
+/// Memory, Passes, Lanes, Tune button, New, Repeat, Current.
+fn tab_times(app: &mut App, n: usize) {
+    for _ in 0..n {
+        press(app, KeyCode::Tab);
+    }
+}
+
+#[test]
+fn settings_change_cipher_and_password() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(app.mode(), Mode::Settings);
+    insta::assert_snapshot!("settings", screen(&app, 84, 24));
+
+    press(&mut app, KeyCode::Right); // Cipher → AES-256-GCM
+    tab_times(&mut app, 5);
+    type_text(&mut app, STRONG);
+    press(&mut app, KeyCode::Tab);
+    type_text(&mut app, STRONG);
+    press(&mut app, KeyCode::Tab);
+    type_text(&mut app, PASSWORD);
+    ctrl(&mut app, 's');
+    assert!(app.has_pending());
+    assert!(screen(&app, 84, 24).contains("Re-encrypting the vault…"));
+    app.run_pending();
+
+    assert_eq!(app.mode(), Mode::List);
+    let shown = screen(&app, 120, 24);
+    assert!(shown.contains("Vault re-encrypted: AES-256-GCM"), "{shown}");
+    assert!(shown.contains("New master password set."), "{shown}");
+
+    press(&mut app, KeyCode::Char('L'));
+    let path = dir.path().join("default.lockery");
+    assert!(
+        Vault::unlock(&path, PASSWORD.as_bytes()).is_err(),
+        "old password no longer works"
+    );
+    let vault = Vault::unlock(&path, STRONG.as_bytes()).unwrap();
+    assert_eq!(vault.cipher(), CipherId::Aes256Gcm);
+    assert_eq!(vault.entries().len(), 3, "entries survive re-encryption");
+}
+
+#[test]
+fn settings_refuse_a_wrong_current_password() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    let before = std::fs::read(dir.path().join("default.lockery")).unwrap();
+    press(&mut app, KeyCode::Char('s'));
+    press(&mut app, KeyCode::Right);
+    tab_times(&mut app, 7);
+    type_text(&mut app, "not it");
+    ctrl(&mut app, 's');
+    app.run_pending();
+
+    assert_eq!(app.mode(), Mode::Settings, "stays open to try again");
+    assert!(screen(&app, 84, 24).contains("The current password is wrong."));
+    assert_eq!(
+        std::fs::read(dir.path().join("default.lockery")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn settings_tune_button_fills_in_argon2() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    let tuned =
+        crate::crypto::KdfParams::new(crate::crypto::KdfParams::MIN_M_COST_KIB * 2, 2, 1).unwrap();
+    app.set_new_vault_kdf(super::app::NewVaultKdf::Fixed(tuned));
+
+    press(&mut app, KeyCode::Char('s'));
+    tab_times(&mut app, 4); // the Tune button
+    press(&mut app, KeyCode::Enter);
+    assert!(screen(&app, 84, 24).contains("Measuring this machine…"));
+    app.run_pending();
+    assert!(screen(&app, 84, 24).contains("Argon2 tuned for this machine."));
+
+    tab_times(&mut app, 3); // Current password
+    type_text(&mut app, PASSWORD);
+    ctrl(&mut app, 's');
+    app.run_pending();
+    press(&mut app, KeyCode::Char('L'));
+    assert_eq!(reopen(dir.path()).kdf(), tuned);
+}
+
+#[test]
+fn settings_need_a_change_and_ask_before_discarding() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Char('s'));
+    ctrl(&mut app, 's');
+    assert!(!app.has_pending());
+    assert!(screen(&app, 84, 24).contains("Nothing to change."));
+
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(
+        app.mode(),
+        Mode::List,
+        "nothing changed: closes straight away"
+    );
+
+    press(&mut app, KeyCode::Char('s'));
+    press(&mut app, KeyCode::Right);
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.mode(), Mode::Confirm);
+    press(&mut app, KeyCode::Char('y'));
+    assert_eq!(app.mode(), Mode::List);
+}

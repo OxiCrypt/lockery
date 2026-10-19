@@ -29,6 +29,8 @@ pub enum Mode {
     Dialog,
     /// The password/passphrase generator popup.
     Generator,
+    /// The vault settings screen.
+    Settings,
     /// A yes/no question.
     Confirm,
     /// The help overlay is open.
@@ -41,12 +43,17 @@ impl Mode {
     pub const fn is_text_entry(self) -> bool {
         matches!(
             self,
-            Self::Unlock | Self::Search | Self::Edit | Self::Dialog | Self::Generator
+            Self::Unlock
+                | Self::Search
+                | Self::Edit
+                | Self::Dialog
+                | Self::Generator
+                | Self::Settings
         )
     }
 
     /// Every mode, for tests and the help overlay.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Picker,
         Self::Unlock,
         Self::List,
@@ -55,6 +62,7 @@ impl Mode {
         Self::Edit,
         Self::Dialog,
         Self::Generator,
+        Self::Settings,
         Self::Confirm,
         Self::Help,
     ];
@@ -101,6 +109,8 @@ pub enum Action {
     Regenerate,
     /// Use the generated value (in the editor, or for a new entry).
     UseGenerated,
+    /// Open the vault settings.
+    Settings,
     /// Rename the selected vault.
     Rename,
     /// Delete the selected entry or vault (after confirmation).
@@ -186,7 +196,9 @@ pub struct Binding {
     pub show: Show,
 }
 
-use Mode::{Confirm, Detail, Dialog, Edit, Generator, Help, List, Picker, Search, Unlock};
+use Mode::{
+    Confirm, Detail, Dialog, Edit, Generator, Help, List, Picker, Search, Settings, Unlock,
+};
 use Show::{Footer, Hidden};
 
 /// All key bindings. Order matters: it is the order of the hints, so the
@@ -324,7 +336,7 @@ pub static BINDINGS: &[Binding] = &[
         label: "Tab",
         description: "Next",
         action: Action::NextField,
-        modes: &[Edit, Dialog, Generator],
+        modes: &[Edit, Dialog, Generator, Settings],
         show: Footer,
     },
     Binding {
@@ -332,7 +344,7 @@ pub static BINDINGS: &[Binding] = &[
         label: "Shift-Tab",
         description: "Back",
         action: Action::PrevField,
-        modes: &[Edit, Dialog, Generator],
+        modes: &[Edit, Dialog, Generator, Settings],
         show: Footer,
     },
     Binding {
@@ -341,6 +353,14 @@ pub static BINDINGS: &[Binding] = &[
         description: "Save",
         action: Action::Save,
         modes: &[Edit],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::ctrl('s')],
+        label: "Ctrl-s",
+        description: "Apply",
+        action: Action::Save,
+        modes: &[Settings],
         show: Footer,
     },
     Binding {
@@ -380,7 +400,7 @@ pub static BINDINGS: &[Binding] = &[
         label: "Esc",
         description: "Cancel",
         action: Action::Cancel,
-        modes: &[Edit, Dialog],
+        modes: &[Edit, Dialog, Settings],
         show: Footer,
     },
     // -- Confirmations --------------------------------------------------------
@@ -478,6 +498,14 @@ pub static BINDINGS: &[Binding] = &[
         modes: &[List, Detail],
         show: Show::Help,
     },
+    Binding {
+        keys: &[Key::char('s')],
+        label: "s",
+        description: "Vault settings",
+        action: Action::Settings,
+        modes: &[List, Detail],
+        show: Show::Help,
+    },
     // -- Secrets --------------------------------------------------------------
     Binding {
         keys: &[Key::char(' ')],
@@ -492,7 +520,7 @@ pub static BINDINGS: &[Binding] = &[
         label: "Ctrl-r",
         description: "Show/hide",
         action: Action::ToggleRevealInput,
-        modes: &[Unlock, Edit, Dialog],
+        modes: &[Unlock, Edit, Dialog, Settings],
         show: Footer,
     },
     // -- Locking and switching ------------------------------------------------
@@ -560,7 +588,7 @@ pub static BINDINGS: &[Binding] = &[
         label: "F1",
         description: "Help",
         action: Action::Help,
-        modes: &[Unlock, Search, Edit, Dialog, Generator],
+        modes: &[Unlock, Search, Edit, Dialog, Generator, Settings],
         show: Footer,
     },
     Binding {

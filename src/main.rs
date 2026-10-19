@@ -14,7 +14,7 @@ use anyhow::{Context, bail};
 use clap::Parser;
 use lockery::config::Config;
 use lockery::crypto::calibrate::{self, DEFAULT_TARGET};
-use lockery::crypto::{CipherId, KdfParams};
+use lockery::crypto::{self, CipherId, KdfParams};
 use lockery::paths::{self, VaultName};
 use lockery::tui::{self, App, StatusKind, VaultTarget};
 use lockery::vault::Vault;
@@ -201,14 +201,5 @@ fn vault_name(config: &Config, name: Option<&str>) -> anyhow::Result<VaultName> 
 
 /// e.g. "XChaCha20-Poly1305, Argon2id 256 MiB × 3 passes × 4 lanes"
 fn describe_crypto(vault: &Vault) -> String {
-    let kdf = vault.kdf();
-    format!(
-        "{}, Argon2id {} MiB × {} {} × {} {}",
-        vault.cipher().name(),
-        kdf.m_cost_kib() / 1024,
-        kdf.t_cost(),
-        if kdf.t_cost() == 1 { "pass" } else { "passes" },
-        kdf.p_cost(),
-        if kdf.p_cost() == 1 { "lane" } else { "lanes" },
-    )
+    crypto::describe(vault.cipher(), vault.kdf())
 }

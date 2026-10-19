@@ -9,6 +9,7 @@ pub mod generator;
 pub mod help;
 pub mod list;
 pub mod picker;
+pub mod settings;
 pub mod unlock;
 
 use ratatui::style::Style;

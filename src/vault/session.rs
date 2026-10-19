@@ -15,7 +15,7 @@ use super::format;
 use super::migrate;
 use super::model::{Entry, VaultData};
 use super::storage::VaultFile;
-use crate::crypto::{CipherId, KdfParams, VaultKey};
+use crate::crypto::{self, CipherId, KdfParams, VaultKey};
 use crate::error::{Error, Result};
 
 /// An open, unlocked vault. Holds the vault's file lock for as long as it
@@ -224,6 +224,54 @@ impl Vault {
         Ok(removed)
     }
 
+    // -- Settings: re-encrypting the whole vault ------------------------------
+
+    /// Re-encrypt the vault with new settings: a new master password
+    /// (`None` keeps the current one), new Argon2 parameters and/or a new
+    /// cipher. A fresh salt is always generated.
+    ///
+    /// `current_password` must be the vault's master password; it is checked
+    /// before anything is written, so an unattended unlocked vault can't be
+    /// taken over.
+    ///
+    /// The vault is saved twice. The first save writes the new version and
+    /// moves the previous one (encrypted the old way) to `.bak`; the second
+    /// replaces that backup with the new version too. Otherwise, after a
+    /// password change, the backup would still open with the old password,
+    /// which is exactly what someone changing a leaked password must avoid.
+    ///
+    /// Runs Argon2 twice (to check the current password and derive the new
+    /// key), so it takes about twice the unlock time.
+    ///
+    /// # Errors
+    /// [`Error::Decryption`] if `current_password` is wrong (nothing is
+    /// changed), any error from key derivation or saving (nothing is
+    /// changed), or [`Error::BackupNotRefreshed`] if the vault was
+    /// re-encrypted but the old backup couldn't be replaced.
+    pub fn rekey(
+        &mut self,
+        current_password: &[u8],
+        new_password: Option<&[u8]>,
+        kdf: KdfParams,
+        cipher: CipherId,
+    ) -> Result<()> {
+        let check = VaultKey::derive(current_password, *self.key.salt(), self.key.kdf())?;
+        if !crypto::keys_equal(check.key(), self.key.key()) {
+            return Err(Error::Decryption);
+        }
+        drop(check);
+
+        let new_key = VaultKey::derive_new(new_password.unwrap_or(current_password), kdf)?;
+        self.write_with(&new_key, cipher, &self.data)?;
+        // The file now uses the new key, so adopt it before anything else
+        // can fail. The old key is wiped as it drops.
+        self.key = new_key;
+        self.cipher = cipher;
+
+        self.write(&self.data)
+            .map_err(|e| Error::BackupNotRefreshed(Box::new(e)))
+    }
+
     /// Apply `change` to a copy of the data, save the copy, then adopt it.
     fn commit(&mut self, change: impl FnOnce(&mut VaultData) -> Result<()>) -> Result<()> {
         let mut next = self.data.clone();
@@ -239,10 +287,15 @@ impl Vault {
     /// written file is decrypted again and compared before it replaces the
     /// old one.
     fn write(&self, data: &VaultData) -> Result<()> {
+        self.write_with(&self.key, self.cipher, data)
+    }
+
+    /// [`write`](Self::write) with an explicit key and cipher, for re-keying.
+    fn write_with(&self, key: &VaultKey, cipher: CipherId, data: &VaultData) -> Result<()> {
         let plaintext = migrate::encode(data)?;
-        let bytes = format::seal(&self.key, self.cipher, &plaintext)?;
+        let bytes = format::seal(key, cipher, &plaintext)?;
         self.file.save(&bytes, |written| {
-            let reread = format::open_with_key(&self.key, written)?;
+            let reread = format::open_with_key(key, written)?;
             if *reread == *plaintext {
                 Ok(())
             } else {
@@ -426,6 +479,59 @@ mod tests {
                 .recovered_from_backup()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn rekey_changes_password_and_refreshes_the_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut v = new_vault(dir.path(), CipherId::XChaCha20Poly1305);
+        v.add(login("A", "1")).unwrap();
+        let path = v.path().to_path_buf();
+        let new_kdf = KdfParams::new(KdfParams::MIN_M_COST_KIB * 2, 2, 1).unwrap();
+
+        v.rekey(PW, Some(b"new password"), new_kdf, CipherId::Aes256Gcm)
+            .unwrap();
+        assert_eq!((v.cipher(), v.kdf()), (CipherId::Aes256Gcm, new_kdf));
+        v.add(login("B", "2")).unwrap(); // later saves use the new key
+        drop(v);
+
+        assert!(matches!(Vault::unlock(&path, PW), Err(Error::Decryption)));
+        let v = Vault::unlock(&path, b"new password").unwrap();
+        assert_eq!(
+            (v.cipher(), v.kdf(), v.entries().len()),
+            (CipherId::Aes256Gcm, new_kdf, 2)
+        );
+        drop(v);
+
+        // The backup no longer opens with the old password either.
+        let bak = fs::read(path.with_extension("lockery.bak")).unwrap();
+        assert!(matches!(format::open(PW, &bak), Err(Error::Decryption)));
+        assert!(format::open(b"new password", &bak).is_ok());
+    }
+
+    #[test]
+    fn rekey_keeps_the_password_when_none_is_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut v = new_vault(dir.path(), CipherId::XChaCha20Poly1305);
+        let path = v.path().to_path_buf();
+        v.rekey(PW, None, test_params(), CipherId::Aes256Gcm)
+            .unwrap();
+        drop(v);
+        assert_eq!(
+            Vault::unlock(&path, PW).unwrap().cipher(),
+            CipherId::Aes256Gcm
+        );
+    }
+
+    #[test]
+    fn rekey_with_wrong_current_password_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut v = new_vault(dir.path(), CipherId::XChaCha20Poly1305);
+        let before = fs::read(v.path()).unwrap();
+        let result = v.rekey(b"wrong", Some(b"new"), test_params(), CipherId::Aes256Gcm);
+        assert!(matches!(result, Err(Error::Decryption)));
+        assert_eq!(v.cipher(), CipherId::XChaCha20Poly1305);
+        assert_eq!(fs::read(v.path()).unwrap(), before);
     }
 
     #[test]

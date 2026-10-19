@@ -38,9 +38,10 @@ use super::form::{Form, FormEvent, Row, RowId};
 use super::generator::{GeneratorState, GeneratorTarget};
 use super::keymap::{self, Action, Mode};
 use super::search::Search;
+use super::settings::SettingsState;
 use crate::config::{Config, GeneratorConfig};
 use crate::crypto::calibrate::{self, DEFAULT_TARGET};
-use crate::crypto::{CipherId, KdfParams};
+use crate::crypto::{self, CipherId, KdfParams};
 use crate::error::Error;
 use crate::paths::{self, VaultName};
 use crate::vault::{Entry, Vault, manage};
@@ -92,6 +93,10 @@ enum Pending {
     Unlock,
     CreateVault,
     DeleteVault,
+    /// Tune the Argon2 fields on the settings screen.
+    Calibrate,
+    /// Apply the settings screen: re-encrypt the vault.
+    Rekey,
 }
 
 /// A yes/no question over the current screen.
@@ -103,6 +108,7 @@ pub(super) struct Confirm {
 enum ConfirmAction {
     DeleteEntry(Uuid),
     DiscardEdit,
+    DiscardSettings,
 }
 
 pub struct App {
@@ -184,6 +190,8 @@ pub(super) struct UnlockedState {
     pub editor: Option<Editor>,
     /// The generator popup, over the list, detail view or editor.
     pub generator: Option<GeneratorState>,
+    /// The vault settings screen.
+    pub settings: Option<SettingsState>,
 }
 
 pub(super) struct DetailState {
@@ -212,6 +220,7 @@ impl UnlockedState {
             detail: None,
             editor: None,
             generator: None,
+            settings: None,
         };
         state.refilter();
         state
@@ -346,6 +355,7 @@ impl App {
             Screen::Picker(_) => Mode::Picker,
             Screen::Unlock(_) => Mode::Unlock,
             Screen::Unlocked(u) if u.generator.is_some() => Mode::Generator,
+            Screen::Unlocked(u) if u.settings.is_some() => Mode::Settings,
             Screen::Unlocked(u) if u.editor.is_some() => Mode::Edit,
             Screen::Unlocked(u) if u.detail.is_some() => Mode::Detail,
             Screen::Unlocked(u) if u.searching => Mode::Search,
@@ -435,6 +445,19 @@ impl App {
                 match generator.form.input(key) {
                     FormEvent::Next => generator.form.focus_next(),
                     FormEvent::Changed(id) => generator.on_change(id),
+                    FormEvent::Activated(_) | FormEvent::None => {}
+                }
+            }
+            Screen::Unlocked(u) if u.settings.is_some() => {
+                let Some(settings) = &mut u.settings else {
+                    return;
+                };
+                match settings.form.input(key) {
+                    FormEvent::Next => settings.form.focus_next(),
+                    FormEvent::Changed(_) => settings.on_change(),
+                    FormEvent::Activated(RowId::Calibrate) => {
+                        self.pending = Some(Pending::Calibrate);
+                    }
                     FormEvent::Activated(_) | FormEvent::None => {}
                 }
             }
@@ -617,6 +640,10 @@ impl App {
             self.generator_action(action);
             return;
         }
+        if u.settings.is_some() {
+            self.settings_action(action);
+            return;
+        }
         if u.editor.is_some() {
             self.editor_action(action);
             return;
@@ -624,6 +651,10 @@ impl App {
 
         // Commands shared by the list and the detail view.
         match action {
+            Action::Settings => {
+                u.settings = Some(SettingsState::new(&u.vault));
+                return;
+            }
             Action::Generate => {
                 u.generator = Some(GeneratorState::new(
                     &self.gen_settings,
@@ -718,6 +749,33 @@ impl App {
                 self.gen_passphrase = generator.form.choice(RowId::GenKind) == 1;
                 u.generator = None;
             }
+            _ => {}
+        }
+    }
+
+    /// Keys on the settings screen.
+    fn settings_action(&mut self, action: Action) {
+        let Screen::Unlocked(u) = &mut self.screen else {
+            return;
+        };
+        let Some(settings) = &mut u.settings else {
+            return;
+        };
+        match action {
+            Action::NextField => settings.form.focus_next(),
+            Action::PrevField => settings.form.focus_prev(),
+            Action::ToggleRevealInput => settings.form.toggle_reveal(),
+            Action::Save => match settings.validate(&u.vault) {
+                Ok(_) => self.pending = Some(Pending::Rekey),
+                Err(message) => settings.error = Some(message),
+            },
+            Action::Cancel if settings.form.dirty => {
+                self.confirm = Some(Confirm {
+                    question: "Discard the settings you changed?".into(),
+                    on_yes: ConfirmAction::DiscardSettings,
+                });
+            }
+            Action::Cancel => u.settings = None,
             _ => {}
         }
     }
@@ -837,6 +895,7 @@ impl App {
         };
         match confirm.on_yes {
             ConfirmAction::DiscardEdit => u.editor = None,
+            ConfirmAction::DiscardSettings => u.settings = None,
             ConfirmAction::DeleteEntry(id) => match u.vault.delete(id) {
                 Ok(removed) => {
                     u.detail = None;
@@ -865,6 +924,8 @@ impl App {
             Pending::Unlock => "Unlocking…",
             Pending::CreateVault => "Creating vault (tuning Argon2)…",
             Pending::DeleteVault => "Checking password…",
+            Pending::Calibrate => "Measuring this machine…",
+            Pending::Rekey => "Re-encrypting the vault…",
         })
     }
 
@@ -874,6 +935,8 @@ impl App {
             Some(Pending::Unlock) => self.finish_unlock(),
             Some(Pending::CreateVault) => self.finish_create_vault(),
             Some(Pending::DeleteVault) => self.finish_delete_vault(),
+            Some(Pending::Calibrate) => self.finish_calibrate(),
+            Some(Pending::Rekey) => self.finish_rekey(),
             None => {}
         }
     }
@@ -958,6 +1021,76 @@ impl App {
                 self.set_status(StatusKind::Info, format!("Deleted vault '{name}'."));
             }
             Err(e) => self.dialog_error(describe_error(&e)),
+        }
+    }
+
+    fn finish_calibrate(&mut self) {
+        let kdf = match self.new_vault_kdf {
+            NewVaultKdf::Fixed(params) => Ok(params),
+            NewVaultKdf::Calibrate => calibrate::calibrate(DEFAULT_TARGET),
+        };
+        let Screen::Unlocked(u) = &mut self.screen else {
+            return;
+        };
+        let Some(settings) = &mut u.settings else {
+            return;
+        };
+        match kdf {
+            Ok(kdf) => {
+                settings.set_kdf(kdf);
+                settings.error = None;
+                self.set_status(
+                    StatusKind::Info,
+                    "Argon2 tuned for this machine. Ctrl-s to apply.",
+                );
+            }
+            Err(e) => settings.error = Some(e.to_string()),
+        }
+    }
+
+    fn finish_rekey(&mut self) {
+        let Screen::Unlocked(u) = &mut self.screen else {
+            return;
+        };
+        let Some(settings) = &mut u.settings else {
+            return;
+        };
+        let change = match settings.change() {
+            Ok(change) => change,
+            Err(message) => {
+                settings.error = Some(message);
+                return;
+            }
+        };
+        let new_password = change.new_password.as_ref().map(|p| p.as_bytes());
+        let result = u.vault.rekey(
+            change.current_password.as_bytes(),
+            new_password,
+            change.kdf,
+            change.cipher,
+        );
+        match result {
+            Ok(()) => {
+                u.settings = None;
+                let mut message = format!(
+                    "Vault re-encrypted: {}.",
+                    crypto::describe(change.cipher, change.kdf)
+                );
+                if change.new_password.is_some() {
+                    message.push_str(" New master password set.");
+                }
+                self.set_status(StatusKind::Info, message);
+            }
+            Err(e @ Error::BackupNotRefreshed(_)) => {
+                u.settings = None;
+                self.set_status(StatusKind::Warning, e.to_string());
+            }
+            Err(Error::Decryption) => {
+                settings.form.set_text(RowId::MasterPassword, "");
+                settings.form.focus_row(RowId::MasterPassword);
+                settings.error = Some("The current password is wrong.".into());
+            }
+            Err(e) => settings.error = Some(format!("Not changed: {e}")),
         }
     }
 

@@ -93,6 +93,14 @@ pub enum Error {
     #[error("no entry with id {0}")]
     EntryNotFound(uuid::Uuid),
 
+    /// Re-keying succeeded, but the `.bak` copy still holds the version
+    /// encrypted the old way (e.g. with the old password).
+    #[error(
+        "the vault was re-encrypted, but its old backup couldn't be replaced ({0}); \
+         the backup still opens with the previous password"
+    )]
+    BackupNotRefreshed(#[source] Box<Error>),
+
     /// Password/passphrase generator options that can't be satisfied.
     #[error("{0}")]
     Generator(String),
