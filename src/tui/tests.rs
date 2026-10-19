@@ -83,9 +83,18 @@ fn sample_entries() -> Vec<Entry> {
     entries
 }
 
+/// The default config, minus the "couldn't lock memory" warning: whether
+/// `mlock` succeeds depends on the machine's limit and on how many tests run
+/// at once, and it mustn't make snapshots flaky.
+fn test_config() -> Config {
+    let mut config = Config::default();
+    config.security.lock_memory = false;
+    config
+}
+
 fn app_for(dir: &Path, vault: Option<&str>) -> App {
     let target = vault.map(|n| VaultTarget::named(&VaultName::parse(n).unwrap(), dir));
-    let mut app = App::new(Config::default(), dir.to_path_buf(), target, Instant::now());
+    let mut app = App::new(test_config(), dir.to_path_buf(), target, Instant::now());
     app.set_time_zone(TimeZone::UTC);
     app
 }
@@ -244,7 +253,7 @@ fn idle_timeout_locks() {
     let dir = setup();
     let start = Instant::now();
     let mut app = App::new(
-        Config::default(),
+        test_config(),
         dir.path().to_path_buf(),
         Some(VaultTarget::named(
             &VaultName::parse("default").unwrap(),
@@ -769,6 +778,16 @@ fn editor_shows_password_strength() {
     type_text(&mut app, "abc");
     assert!(screen(&app, 70, 22).contains("very weak"));
     type_text(&mut app, "-Quartz-Lantern-Velvet-91");
+    assert!(screen(&app, 70, 22).contains("very strong"));
+
+    // The strength is cached, so it must follow every relevant change: a
+    // secure note has no password row, so no meter either.
+    for _ in 0..3 {
+        press(&mut app, KeyCode::BackTab); // Username, Title, Type
+    }
+    press(&mut app, KeyCode::Right);
+    assert!(!screen(&app, 70, 22).contains("Password strength"));
+    press(&mut app, KeyCode::Left);
     assert!(screen(&app, 70, 22).contains("very strong"));
 }
 

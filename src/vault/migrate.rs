@@ -19,8 +19,8 @@
 
 use std::io;
 
+use crate::hardening::SecretBuf;
 use serde::Deserialize;
-use zeroize::Zeroizing;
 
 use super::model::VaultData;
 use crate::error::{Error, Result};
@@ -56,14 +56,14 @@ pub fn decode(bytes: &[u8]) -> Result<VaultData> {
 ///
 /// # Errors
 /// [`Error::Payload`] if serialisation fails (it shouldn't).
-pub fn encode(data: &VaultData) -> Result<Zeroizing<Vec<u8>>> {
+pub fn encode(data: &VaultData) -> Result<SecretBuf> {
     debug_assert_eq!(data.schema_version, CURRENT_SCHEMA_VERSION);
 
     let mut counter = CountingWriter(0);
     ciborium::into_writer(data, &mut counter).map_err(payload_error)?;
 
-    let mut out = Zeroizing::new(Vec::with_capacity(counter.0));
-    ciborium::into_writer(data, &mut *out).map_err(payload_error)?;
+    let mut out = SecretBuf::with_capacity(counter.0);
+    ciborium::into_writer(data, &mut out).map_err(payload_error)?;
     debug_assert_eq!(out.len(), counter.0, "buffer must not have reallocated");
     Ok(out)
 }

@@ -30,7 +30,7 @@
 //! Readers for old versions must never be removed. New versions get a new
 //! `decode_vN` and become what [`seal`] writes.
 
-use zeroize::Zeroizing;
+use crate::hardening::SecretBuf;
 
 use crate::crypto::{self, CipherId, KdfId, KdfParams, SALT_LEN, TAG_LEN, VaultKey};
 use crate::error::{Error, Result};
@@ -84,7 +84,7 @@ pub struct Opened {
     /// [`CURRENT_FORMAT_VERSION`], the next save upgrades the file.
     pub format_version: u16,
     /// The decrypted, un-padded payload.
-    pub plaintext: Zeroizing<Vec<u8>>,
+    pub plaintext: SecretBuf,
 }
 
 // ---------------------------------------------------------------------------
@@ -179,7 +179,7 @@ pub fn open(password: &[u8], bytes: &[u8]) -> Result<Opened> {
 /// # Errors
 /// Anything [`decode`] returns, [`Error::Decryption`] if the file was not
 /// written with `key` or is damaged.
-pub fn open_with_key(key: &VaultKey, bytes: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+pub fn open_with_key(key: &VaultKey, bytes: &[u8]) -> Result<SecretBuf> {
     let parsed = decode(bytes)?;
     if parsed.header.salt != *key.salt() || parsed.header.kdf != key.kdf() {
         // Different salt/params means a different key; don't bother trying.
@@ -188,7 +188,7 @@ pub fn open_with_key(key: &VaultKey, bytes: &[u8]) -> Result<Zeroizing<Vec<u8>>>
     decrypt_parsed(key, &parsed)
 }
 
-fn decrypt_parsed(key: &VaultKey, parsed: &Parsed<'_>) -> Result<Zeroizing<Vec<u8>>> {
+fn decrypt_parsed(key: &VaultKey, parsed: &Parsed<'_>) -> Result<SecretBuf> {
     let padded = crypto::open(
         parsed.header.cipher,
         key.key(),
@@ -250,18 +250,20 @@ fn encode_header(h: &Header, ct_len: u64) -> Vec<u8> {
 
 /// Frame `plaintext` as `len || plaintext || zeros`, rounded up to a
 /// multiple of [`PAD_BLOCK`] (always at least one block).
-fn pad(plaintext: &[u8]) -> Zeroizing<Vec<u8>> {
+fn pad(plaintext: &[u8]) -> SecretBuf {
     let total = (LEN_PREFIX + plaintext.len()).div_ceil(PAD_BLOCK) * PAD_BLOCK;
-    let mut buf = Zeroizing::new(Vec::with_capacity(total));
-    buf.extend_from_slice(&(plaintext.len() as u64).to_le_bytes());
-    buf.extend_from_slice(plaintext);
-    buf.resize(total, 0);
+    let mut buf = SecretBuf::with_capacity(total);
+    let fits = buf
+        .extend_from_slice(&(plaintext.len() as u64).to_le_bytes())
+        .and_then(|()| buf.extend_from_slice(plaintext))
+        .and_then(|()| buf.resize(total));
+    debug_assert!(fits.is_ok(), "`total` covers prefix and plaintext");
     buf
 }
 
 /// Reverse [`pad`]. The buffer is shrunk in place so no unwiped copy of the
-/// plaintext is left behind (`Zeroizing<Vec>` wipes its whole capacity).
-fn unpad(mut buf: Zeroizing<Vec<u8>>) -> Result<Zeroizing<Vec<u8>>> {
+/// plaintext is left behind ([`SecretBuf`] wipes its whole capacity).
+fn unpad(mut buf: SecretBuf) -> Result<SecretBuf> {
     let prefix: [u8; LEN_PREFIX] = buf
         .get(..LEN_PREFIX)
         .and_then(|s| s.try_into().ok())
@@ -271,7 +273,7 @@ fn unpad(mut buf: Zeroizing<Vec<u8>>) -> Result<Zeroizing<Vec<u8>>> {
     if len > buf.len() - LEN_PREFIX {
         return Err(Error::Malformed("payload length exceeds padded size"));
     }
-    buf.drain(..LEN_PREFIX);
+    buf.remove_prefix(LEN_PREFIX);
     buf.truncate(len);
     Ok(buf)
 }

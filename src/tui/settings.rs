@@ -147,9 +147,7 @@ impl SettingsState {
             self.form.focus_row(RowId::MasterPassword);
             return Err("Enter your current master password to apply the changes.".into());
         }
-        if *Zeroizing::new(self.form.text(RowId::RepeatPassword))
-            != *Zeroizing::new(self.form.text(RowId::NewPassword))
-        {
+        if *self.form.text(RowId::RepeatPassword) != *self.form.text(RowId::NewPassword) {
             return Err("The new passwords don't match.".into());
         }
         if let Some(new) = &change.new_password
@@ -170,9 +168,9 @@ impl SettingsState {
     /// # Errors
     /// A message if the Argon2 settings are out of range.
     pub fn change(&self) -> Result<Change, String> {
-        let new = Zeroizing::new(self.form.text(RowId::NewPassword));
+        let new = self.form.text(RowId::NewPassword);
         Ok(Change {
-            current_password: Zeroizing::new(self.form.text(RowId::MasterPassword)),
+            current_password: self.form.text(RowId::MasterPassword),
             new_password: (!new.is_empty()).then_some(new),
             kdf: self.kdf()?,
             cipher: CipherId::ALL[self.form.choice(RowId::Cipher)],

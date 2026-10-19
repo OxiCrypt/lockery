@@ -13,7 +13,7 @@ cargo audit
 INSTA_UPDATE=always cargo test --lib   # rewrite TUI snapshots after an intended UI change
 ```
 
-Every change must pass all of the above on **stable and nightly** (`cargo +stable …`, `cargo +nightly …`). Nightly cargo warns about dependencies not yet used by code (e.g. `secrecy`); that's a manifest warning, not a clippy failure.
+Every change must pass all of the above on **stable and nightly** (`cargo +stable …`, `cargo +nightly …`).
 
 Fuzzing (nightly + cargo-fuzz), seeded with the fixture vaults:
 
@@ -36,6 +36,7 @@ Library (`src/lib.rs`) holds all logic; `src/main.rs` is a thin CLI (`cli.rs`, `
 - `vault/manage.rs`: rename/delete whole vaults. `paths.rs`: vault names and data dir. `config.rs`: TOML config.
 - `generator/`: password/passphrase generators (embedded EFF wordlist), `random_below` (rejection sampling), `Strength` (zxcvbn).
 - `csv_io/`: CSV import (Bitwarden, KeePassXC, Chrome, Firefox; columns matched by name) and Bitwarden-format export. Named `csv_io` to avoid clashing with the `csv` crate.
+- `hardening.rs`: core dumps off / `PR_SET_DUMPABLE` (`harden_process`, first thing in `main`), and `SecretBuf`, the page-aligned, `mlock`ed, wiped-on-drop buffer for the key and decrypted payload (`[security] lock_memory`). The only module with `unsafe`.
 - `clipboard.rs`: copy with timed clear (only if the clipboard still holds our copy), `FakeBackend` for tests, `emergency_clear` for panic/signal handlers.
 - `tui/`: `app.rs` is all state and behaviour with **no terminal I/O** (testable). `keymap.rs` is the single table of key bindings that drives input, the footer and the help overlay. `ui.rs`/`views/`/`widgets/` only read state. `form.rs` is the shared form widget (text areas wiped on drop). `mod.rs::run` owns the terminal, the panic hook and signals.
 
@@ -46,7 +47,7 @@ Slow Argon2 work in the TUI (unlock, create/delete vault, rekey, export, calibra
 - **Backwards compatibility:** never regenerate a committed fixture in `tests/fixtures/` (`v1-*.lockery`, `schema-v1.lockery`) once its version is released. Never remove an old format reader or schema migration. A field rename/removal/meaning change needs a schema bump plus a migration step; new fields need `#[serde(default)]`. New KDF/cipher ids need a new format version. KDF minimums may only go down.
 - **Secrets:** wrap plaintext/keys in `Zeroizing`, size buffers up front so they don't reallocate, never print secrets (keep `Debug` redacted), never search or log them. Anything that may hold a secret should be wiped when dropped.
 - **Keys:** add bindings only in `tui/keymap.rs`. The keymap tests forbid binding a key twice in a mode, and forbid binding printable keys in text-entry modes. Check the 80-column footer test (`widgets/footer.rs`); use the `short` label when space is tight.
-- **Unsafe** is `deny` at crate level; any libc call (M9) must opt in locally with a comment.
+- **Unsafe** is `deny` at crate level; it is allowed only in `hardening.rs` (and `tests/hardening.rs`, which reads the limits back), each site opting in locally with a SAFETY comment.
 - No `#[allow(clippy::…)]` without a comment saying why; prefer fixing the lint.
 
 ## Conventions

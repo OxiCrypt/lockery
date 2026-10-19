@@ -23,6 +23,7 @@ so I'm building one myself, with AI assistance.
 | Clipboard auto-clearing | ✅ Done |
 | Intuitive TUI-based interface | ✅ Done |
 | Named vaults alongside a primary vault | ✅ Done |
+| Memory and process hardening | ✅ Done |
 | Passkey support | ⏳ After the first alpha |
 
 How each finished one works:
@@ -38,10 +39,62 @@ How each finished one works:
 - **Generators:** random passwords (length, character kinds, avoiding look-alikes such as 0/O) and passphrases from the EFF wordlist (word count, separator, capitals). `Ctrl-g` in the entry editor fills in the password; `g` in the list starts a new entry with one. Each comes with a strength meter and an entropy estimate, and all randomness comes from the operating system.
 - **CSV:** import exports from Bitwarden, KeePassXC, Chrome (and other Chromium browsers) or Firefox with `i` in the app or `lockery import <file>`. You see what was found, which entries are already in the vault and any warnings before anything is added. Export everything in Bitwarden format with `x`; almost every password manager can import it. The file is plaintext, so the export asks for your master password again, is readable only by you, and never overwrites an existing file.
 - **Clipboard:** `c` copies the password and `u` the username. The clipboard is cleared after 20 seconds (`clipboard_clear_secs` in the config), and whenever the vault locks or Lockery quits, but only if it still holds what Lockery put there, so your own copies are left alone. Copies ask clipboard managers not to keep them in their history.
+- **Hardening:** Lockery can't leave a core dump behind, and on Linux other programs running as you can't attach a debugger to it or read its memory. The vault key and the decrypted vault are kept out of swap and wiped from memory once they're no longer needed. See the threat model below.
+
+## Security and threat model
+
+Lockery is an alpha. Its design hasn't been reviewed by anyone outside the project.
+
+**What it protects against**
+
+- **Someone with a copy of your vault file** (a stolen laptop, a backup, a synced folder). Without the master password, the file is useless: Argon2id makes guessing slow, and everything except the encryption settings is encrypted, including titles, usernames, URLs and the number of entries. The size is padded to 4 KiB steps.
+- **Tampering with the file.** The whole header, Argon2 and cipher settings included, is authenticated. A changed file doesn't open, and settings outside the allowed range are rejected before Argon2 even runs.
+- **Losing data in a crash** while saving, or two copies of Lockery saving at once. See *Crash safety* above.
+- **Passwords left on the clipboard.** They're cleared after a timeout, on lock and on quit, and even when Lockery crashes or is killed by a signal.
+- **Secrets leaking out of a running Lockery:**
+  - core dumps are turned off at startup;
+  - on Linux the process is marked non-dumpable (`PR_SET_DUMPABLE`), so other programs running as you can't `ptrace` it or read `/proc/<pid>/mem`;
+  - the vault key and the decrypted vault are on memory pages locked out of swap (`mlock`, on by default, see below);
+  - secrets are wiped from memory when they're no longer needed, including the values an edit replaces.
+- **An unattended unlocked vault.** It locks itself after 5 minutes idle (`idle_lock_secs`), and changing the master password or encryption settings, exporting, or deleting a vault all ask for the current master password again.
+
+**What it doesn't protect against**
+
+- **Malware, or anyone with root or administrator rights, on your computer.** It can read Lockery's memory or log your keystrokes. No password manager can defend against that.
+- **A weak master password.** Argon2 slows guessing down; it can't stop it. Lockery warns you about easy-to-guess passwords, but lets you use one if you insist.
+- **What you show on screen.** A revealed password is visible to anyone looking, and may stay in your terminal's scrollback, in `tmux`/`screen` history, or in a screen recording.
+- **Clipboard managers that ignore the "don't keep this" hint**, and programs that read the clipboard during the seconds a password is on it.
+- **Plaintext CSV files.** An export (or a file you import) holds every password in the clear. Delete it as soon as you're done with it.
+- **Every last copy in memory.** Lockery wipes what it controls, but some libraries keep copies it can't reach. They're gone once Lockery exits (the OS clears memory before reusing it), but while it runs, and in swap, they may linger:
+  - the text editor widget's cut buffer, and the old buffers it frees as you type;
+  - the password strength checker (zxcvbn), once per edit;
+  - the clipboard library's copy of whatever you copied;
+  - the CBOR decoder's scratch space while a vault is opened;
+  - Argon2's working memory;
+  - terminal input and output buffers.
+
+  Entry contents (as opposed to the key and the decrypted vault file) are many small allocations, and they are wiped but not locked against swap. Use encrypted swap, or none, if that matters to you.
+
+**Per platform**
+
+| | Linux | macOS | Windows |
+|---|---|---|---|
+| No core dumps | ✅ | ✅ | ❌ Windows Error Reporting can still write a crash dump |
+| No same-user debugger or memory reads | ✅ | ❌ | ❌ |
+| Key and decrypted vault kept out of swap | ✅ | ✅ | ❌ not yet |
+| Secrets wiped from memory | ✅ | ✅ | ✅ |
+
+**Memory locking.** The amount of memory a program may lock is limited (`ulimit -l`, usually 8 MiB on Linux, which is plenty). If locking fails, Lockery warns you once and carries on without it. To turn it off:
+
+```toml
+# ~/.config/lockery/config.toml
+[security]
+lock_memory = false
+```
 
 ## Status
 
-Every feature of the first alpha is in place: vaults, entries, the generator, the clipboard, CSV import and export, and settings. What's left before calling it 0.1 is hardening (see the roadmap). Until then, keep a copy of your passwords in your current manager.
+Lockery 0.1 is the first alpha: vaults, entries, the generator, the clipboard, CSV import and export, settings and hardening are all in place. It's an alpha, so keep a copy of your passwords in your current manager for now.
 
 See [ROADMAP.md](ROADMAP.md) for the full milestone plan and progress.
 

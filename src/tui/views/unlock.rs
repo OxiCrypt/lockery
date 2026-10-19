@@ -34,15 +34,19 @@ pub fn render(u: &UnlockState, busy: Option<&str>, frame: &mut Frame<'_>, area: 
 
     // One bullet per character, so typing gives feedback; Ctrl-r shows the
     // real text. Only the tail is shown if it's longer than the field.
-    let shown: String = if u.reveal {
-        u.input.chars().collect()
+    // The revealed text is a borrowed slice of the (wiped-on-drop) input, never
+    // a copy: a copy would be freed unwiped after every frame.
+    let chars = u.input.chars().count();
+    let skip = chars.saturating_sub(FIELD_WIDTH);
+    let visible_chars = chars - skip;
+    let visible = if u.reveal {
+        let start = u.input.char_indices().nth(skip).map_or(0, |(i, _)| i);
+        Span::styled(&u.input[start..], theme::SECRET)
     } else {
-        "•".repeat(u.input.chars().count())
+        Span::styled("•".repeat(visible_chars), theme::SECRET)
     };
-    let skip = shown.chars().count().saturating_sub(FIELD_WIDTH);
-    let visible: String = shown.chars().skip(skip).collect();
-    let cursor_x = field.x + u16::try_from(visible.chars().count()).unwrap_or(0);
-    frame.render_widget(Paragraph::new(Span::styled(visible, theme::SECRET)), field);
+    let cursor_x = field.x + u16::try_from(visible_chars).unwrap_or(0);
+    frame.render_widget(Paragraph::new(visible), field);
 
     let note = if let Some(busy) = busy {
         Some(Line::styled(busy.to_owned(), theme::INFO))

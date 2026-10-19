@@ -160,7 +160,7 @@ impl GeneratorState {
             symbols: f.toggle(RowId::Symbols),
             exclude_ambiguous: f.toggle(RowId::NoAmbiguous),
             passphrase_words: u8::try_from(f.number(RowId::Words)).unwrap_or(u8::MAX),
-            passphrase_separator: f.text(RowId::Separator),
+            passphrase_separator: f.text(RowId::Separator).as_str().to_owned(),
             passphrase_capitalize: f.toggle(RowId::Capitalize),
         }
     }

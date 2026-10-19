@@ -17,7 +17,7 @@ follow in M10.
 | [M6: Clipboard](#m6-clipboard) | ✅ Done |
 | [M7: CSV import and export](#m7-csv-import-and-export) | ✅ Done (ahead of M6) |
 | [M8: Settings](#m8-settings) | ✅ Done (ahead of M6–M7) |
-| [M9: Hardening and alpha 0.1](#m9-hardening-and-alpha-01) | ⏳ Next |
+| [M9: Hardening and alpha 0.1](#m9-hardening-and-alpha-01) | 🚧 Done except the `v0.1.0` tag |
 | [M10: Passkeys](#m10-passkeys-post-alpha) | ⏳ After alpha |
 
 ---
@@ -182,14 +182,29 @@ follow in M10.
 
 ## M9: Hardening and alpha 0.1
 
-⏳
+🚧 Done except the tag
 
-- [ ] Core dumps disabled; `PR_SET_DUMPABLE` set to 0 on Linux
-- [ ] Optional `mlock` of secret memory
-- [ ] Review that every secret is wiped from memory
-- [ ] `cargo audit` and `cargo deny check` clean
-- [ ] README: threat model (the EFF wordlist credit was added in M5)
-- [ ] Tag `v0.1.0`
+- [x] Core dumps disabled; `PR_SET_DUMPABLE` set to 0 on Linux, first thing in `main` (`src/hardening.rs`, `src/main.rs`)
+  - [x] core limit set to 0 on all unices; macOS skips `PT_DENY_ATTACH` on purpose; Windows is a no-op for now (documented)
+  - [x] failures warn instead of stopping Lockery
+  - [x] tested in its own process (`tests/hardening.rs`) and by hand on Linux: `/proc/<pid>/mem` refused to the same user, and no core after `SIGABRT`, while a control process did dump core
+- [x] Optional `mlock` of secret memory: `[security] lock_memory`, on by default, best-effort (`src/config.rs`)
+  - [x] `SecretBuf`: page-aligned, whole pages of its own (so `munlock` can't unlock a neighbour), `mlock`ed and `MADV_DONTDUMP`, wiped before it's freed, never reallocated (`src/hardening.rs`)
+  - [x] holds the vault key (derived by Argon2 straight into it, with no stack copies on the way), the decrypted payload (decrypted in place), the padded plaintext and the CBOR encoding (`src/crypto/mod.rs`, `src/vault/format.rs`, `src/vault/migrate.rs`)
+  - [x] a failed lock warns once, in the TUI after unlocking or on stderr for CLI commands
+  - [ ] Windows `VirtualLock` (needs `windows-sys`)
+- [x] Review that every secret is wiped from memory
+  - [x] detail, unlock and generator views borrow secrets instead of copying them each frame (`src/tui/views/`)
+  - [x] saving an edit wipes the values it replaces (`src/tui/entry_form.rs`); form text comes back as `Zeroizing` (`src/tui/form.rs`)
+  - [x] ticking "Hidden" on a custom field drops its undo history
+  - [x] password strength is worked out once per edit, not every frame (zxcvbn keeps copies) (`src/tui/app.rs`)
+  - [x] typed master passwords: backspace wipes, and growing wipes the old buffer (`hardening::push_char`/`pop_char`)
+  - [x] CSV export wipes every per-row copy, hidden custom fields included, even on errors; CSV import reuses one record buffer
+  - [x] copies inside libraries that Lockery can't wipe are listed in the README's threat model
+  - [x] unused `secrecy` dependency removed
+- [x] `cargo audit` and `cargo deny check` clean; CI runs both (`.github/workflows/ci.yml`)
+- [x] README: threat model (the EFF wordlist credit was added in M5)
+- [ ] Tag `v0.1.0` (after this is merged to `main`)
 
 ## M10: Passkeys (post-alpha)
 
@@ -210,6 +225,7 @@ cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 cargo deny check
+cargo audit
 ```
 
 To fuzz the header parser (needs the nightly toolchain and `cargo-fuzz`):

@@ -72,45 +72,53 @@ pub fn export_bitwarden(entries: &[Entry]) -> Result<Exported> {
     for e in entries {
         extra_tags += usize::from(e.tags.len() > 1);
         hidden_fields += e.custom_fields.iter().filter(|f| f.hidden).count();
-        let fields: Vec<String> = e
+        // Every copy made for this row (hidden custom fields included) is a
+        // `Zeroizing` one, so it's wiped when the row is done, even if
+        // writing it fails.
+        let fields: Vec<Zeroizing<String>> = e
             .custom_fields
             .iter()
             .map(|f| {
                 if f.value.contains('\n') {
                     joined_values += 1;
                 }
-                format!("{}: {}", f.name, f.value.replace('\n', " "))
+                let value = Zeroizing::new(f.value.replace('\n', " "));
+                Zeroizing::new(format!("{}: {}", f.name, *value))
             })
             .collect();
+        let custom = Zeroizing::new(
+            fields
+                .iter()
+                .map(|f| f.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
         let is_login = e.kind == EntryKind::Login;
-        let login = |value: String| if is_login { value } else { String::new() };
+        // A note keeps the login values it had before its type changed;
+        // they aren't exported, and aren't even copied.
+        let login = |value: &str| Zeroizing::new(if is_login { value } else { "" }.to_owned());
+        let urls = Zeroizing::new(if is_login {
+            e.urls.join(",")
+        } else {
+            String::new()
+        });
+        let text = |s: &str| Zeroizing::new(s.to_owned());
         let record = [
-            e.tags.first().cloned().unwrap_or_default(),
-            if e.favorite {
-                "1".into()
-            } else {
-                String::new()
-            },
-            if is_login {
-                "login".into()
-            } else {
-                "note".into()
-            },
-            e.title.clone(),
-            e.notes.clone(),
-            fields.join("\n"),
-            "0".into(),
-            login(e.urls.join(",")),
-            login(e.username.clone()),
-            login(e.password.clone()),
-            login(e.totp.clone()),
+            text(e.tags.first().map_or("", String::as_str)),
+            text(if e.favorite { "1" } else { "" }),
+            text(if is_login { "login" } else { "note" }),
+            text(&e.title),
+            text(&e.notes),
+            custom,
+            text("0"),
+            urls,
+            login(&e.username),
+            login(&e.password),
+            login(&e.totp),
         ];
-        writer.write_record(&record).map_err(|e| export_error(&e))?;
-        // Wipe this row's copies of the secrets.
-        let mut record = record;
-        for field in &mut record {
-            zeroize::Zeroize::zeroize(field);
-        }
+        writer
+            .write_record(record.iter().map(|f| f.as_bytes()))
+            .map_err(|e| export_error(&e))?;
     }
 
     writer.flush()?;

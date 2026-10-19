@@ -11,6 +11,8 @@
 //! A custom field whose name and value are both left empty is dropped on
 //! save; that's how custom fields are removed.
 
+use zeroize::{Zeroize, Zeroizing};
+
 use super::form::{Form, Row, RowId};
 use crate::vault::{CustomField, Entry, EntryKind};
 
@@ -46,9 +48,11 @@ pub fn build(entry: Option<&Entry>) -> Form {
         Row::text(RowId::Title, "Title", &e.title).with_placeholder("required"),
         Row::text(RowId::Username, "Username", &e.username),
         Row::secret(RowId::Password, "Password", &e.password),
-        Row::multiline(RowId::Urls, "URLs", &e.urls.join("\n")).with_placeholder("one per line"),
+        Row::multiline(RowId::Urls, "URLs", &Zeroizing::new(e.urls.join("\n")))
+            .with_placeholder("one per line"),
         Row::secret(RowId::Totp, "TOTP", &e.totp).with_placeholder("secret or otpauth:// URI"),
-        Row::text(RowId::Tags, "Tags", &e.tags.join(", ")).with_placeholder("comma-separated"),
+        Row::text(RowId::Tags, "Tags", &Zeroizing::new(e.tags.join(", ")))
+            .with_placeholder("comma-separated"),
         Row::toggle(RowId::Favorite, "Favourite", e.favorite),
     ];
     for (i, field) in e.custom_fields.iter().enumerate() {
@@ -125,46 +129,54 @@ pub fn title(form: &Form) -> Option<String> {
 }
 
 /// Write the form's values into `entry`. Doesn't touch `id` or timestamps.
+///
+/// Every old value is wiped before it is replaced, and every intermediate
+/// copy is a [`Zeroizing`] one: `entry` is usually a clone that the vault
+/// keeps (see `Vault::update`), so plain assignment would free the previous
+/// password, notes and so on without wiping them.
 pub fn apply(form: &Form, entry: &mut Entry) {
     entry.kind = kind_from_index(form.choice(RowId::Kind));
-    form.text(RowId::Title).trim().clone_into(&mut entry.title);
-    entry.username = form.text(RowId::Username);
-    entry.password = form.text(RowId::Password);
-    entry.urls = form
-        .text(RowId::Urls)
-        .lines()
-        .map(str::trim)
-        .filter(|u| !u.is_empty())
-        .map(str::to_owned)
-        .collect();
-    form.text(RowId::Totp).trim().clone_into(&mut entry.totp);
-    entry.tags = form
-        .text(RowId::Tags)
-        .split(',')
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .map(str::to_owned)
-        .collect();
+    replace(&mut entry.title, form.text(RowId::Title).trim());
+    replace(&mut entry.username, &form.text(RowId::Username));
+    replace(&mut entry.password, &form.text(RowId::Password));
+    replace_list(&mut entry.urls, form.text(RowId::Urls).lines());
+    replace(&mut entry.totp, form.text(RowId::Totp).trim());
+    replace_list(&mut entry.tags, form.text(RowId::Tags).split(','));
     entry.favorite = form.toggle(RowId::Favorite);
+    // `CustomField` wipes itself on drop, so the old list can simply go.
     entry.custom_fields = (0..custom_count(form))
         .filter_map(|i| {
-            let name = form.text(RowId::CustomName(i)).trim().to_owned();
+            let name = form.text(RowId::CustomName(i));
+            let name = name.trim();
             let value = form.text(RowId::CustomValue(i));
             if name.is_empty() && value.is_empty() {
                 return None;
             }
             Some(CustomField {
-                name: if name.is_empty() {
-                    "Field".into()
-                } else {
-                    name
-                },
-                value,
+                name: if name.is_empty() { "Field" } else { name }.to_owned(),
+                value: value.as_str().to_owned(),
                 hidden: form.toggle(RowId::CustomHidden(i)),
             })
         })
         .collect();
-    entry.notes = form.text(RowId::Notes);
+    replace(&mut entry.notes, &form.text(RowId::Notes));
+}
+
+/// Wipe `dst`, then copy `new` into it. If `new` is longer, the buffer that
+/// `clone_into` gives up has already been wiped.
+fn replace(dst: &mut String, new: &str) {
+    dst.zeroize();
+    new.clone_into(dst);
+}
+
+/// Wipe `dst`, then fill it with the trimmed, non-empty `items`.
+fn replace_list<'a>(dst: &mut Vec<String>, items: impl Iterator<Item = &'a str>) {
+    dst.zeroize();
+    *dst = items
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
 }
 
 #[cfg(test)]

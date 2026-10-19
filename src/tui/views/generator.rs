@@ -42,7 +42,7 @@ pub fn render(g: &GeneratorState, frame: &mut Frame<'_>, area: Rect) {
     // ones wrap (passwords have no spaces, so wrap by character).
     let value_line = match &g.error {
         Some(error) => Line::styled(error.clone(), theme::ERROR),
-        None => Line::styled(g.value.to_string(), theme::SECRET),
+        None => Line::styled(g.value.as_str(), theme::SECRET), // borrowed, not copied
     };
     frame.render_widget(Paragraph::new(value_line).wrap(Wrap { trim: false }), value);
 

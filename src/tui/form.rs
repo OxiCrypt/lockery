@@ -15,7 +15,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Style;
 use ratatui_textarea::{CursorMove, TextArea};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use super::theme;
 
@@ -67,6 +67,9 @@ pub enum RowId {
     Capitalize,
 }
 
+/// Undo steps kept for non-secret fields (ratatui-textarea's own default).
+const DEFAULT_HISTORY: usize = 50;
+
 /// A text field that wipes its contents on drop.
 pub struct TextField {
     area: TextArea<'static>,
@@ -100,10 +103,20 @@ impl TextField {
         }
     }
 
-    /// Current contents; lines are joined with `\n`.
+    /// Current contents; lines are joined with `\n`. The copy is sized up
+    /// front (so it never reallocates) and wiped when dropped.
     #[must_use]
-    pub fn text(&self) -> String {
-        self.area.lines().join("\n")
+    pub fn text(&self) -> Zeroizing<String> {
+        let lines = self.area.lines();
+        let len = lines.iter().map(String::len).sum::<usize>() + lines.len().saturating_sub(1);
+        let mut out = Zeroizing::new(String::with_capacity(len));
+        for (i, line) in lines.iter().enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            out.push_str(line);
+        }
+        out
     }
 
     #[must_use]
@@ -116,8 +129,14 @@ impl TextField {
         self.secret
     }
 
+    /// Mark the field secret or not. Becoming secret also drops the undo
+    /// history (and keeps it off), as for fields created secret; otherwise
+    /// undo could bring back text typed before "Hidden" was ticked.
+    /// ratatui-textarea can't wipe the history it drops; see the threat model.
     pub fn set_secret(&mut self, secret: bool) {
         self.secret = secret;
+        self.area
+            .set_max_histories(if secret { 0 } else { DEFAULT_HISTORY });
     }
 
     /// The widget, for rendering.
@@ -425,10 +444,10 @@ impl Form {
 
     /// The text of row `id` (empty if it isn't a text row).
     #[must_use]
-    pub fn text(&self, id: RowId) -> String {
+    pub fn text(&self, id: RowId) -> Zeroizing<String> {
         match self.row(id).map(|r| &r.widget) {
             Some(Widget::Text(field)) => field.text(),
-            _ => String::new(),
+            _ => Zeroizing::default(),
         }
     }
 
@@ -569,8 +588,27 @@ mod tests {
     fn text_fields_start_with_cursor_at_the_end() {
         let mut form = sample();
         type_text(&mut form, " world");
-        assert_eq!(form.text(RowId::Title), "hello world");
+        assert_eq!(form.text(RowId::Title).as_str(), "hello world");
         assert!(form.dirty);
+    }
+
+    #[test]
+    fn becoming_secret_drops_undo_history() {
+        let mut field = TextField::new("", false, false);
+        for c in "typed in the clear".chars() {
+            field.input(key(KeyCode::Char(c)));
+        }
+        let mut control = TextField::new("", false, false);
+        control.input(key(KeyCode::Char('x')));
+        assert!(control.area.undo(), "plain fields keep undo history");
+
+        // Ticking "Hidden": the history mustn't let undo bring back (or keep
+        // around) earlier versions of what is now a secret.
+        field.set_secret(true);
+        assert!(!field.area.undo());
+        assert_eq!(field.text().as_str(), "typed in the clear");
+        field.input(key(KeyCode::Char('!')));
+        assert!(!field.area.undo(), "and no new history is recorded");
     }
 
     #[test]
@@ -582,7 +620,7 @@ mod tests {
         form.focus_row(RowId::Notes);
         type_text(&mut form, "c");
         form.input(key(KeyCode::Enter));
-        assert_eq!(form.text(RowId::Notes), "c\na\nb");
+        assert_eq!(form.text(RowId::Notes).as_str(), "c\na\nb");
     }
 
     #[test]
@@ -669,7 +707,7 @@ mod tests {
     fn set_text_replaces_contents() {
         let mut form = sample();
         form.set_text(RowId::Password, "generated");
-        assert_eq!(form.text(RowId::Password), "generated");
+        assert_eq!(form.text(RowId::Password).as_str(), "generated");
         assert!(form.dirty);
     }
 
@@ -685,6 +723,6 @@ mod tests {
         assert_eq!(mask(&form), Some(MASK_CHAR));
         form.toggle_reveal();
         assert_eq!(mask(&form), None);
-        assert_eq!(form.text(RowId::Password), "pw");
+        assert_eq!(form.text(RowId::Password).as_str(), "pw");
     }
 }

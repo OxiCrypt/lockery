@@ -90,9 +90,9 @@ fn read_hidden() -> io::Result<Zeroizing<String>> {
                 break Err(io::ErrorKind::Interrupted);
             }
             KeyCode::Backspace => {
-                input.pop();
+                lockery::hardening::pop_char(&mut input);
             }
-            KeyCode::Char(c) => input.push(c),
+            KeyCode::Char(c) => lockery::hardening::push_char(&mut input, c),
             _ => {}
         }
     };

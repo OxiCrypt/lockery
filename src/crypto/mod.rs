@@ -9,14 +9,14 @@ pub mod calibrate;
 use std::fmt;
 
 use aes_gcm::Aes256Gcm;
-use aes_gcm::aead::{self, Aead, KeyInit, Payload};
+use aes_gcm::aead::{self, Aead, AeadInOut, KeyInit, Payload};
 use argon2::{Algorithm, Argon2, Version};
 use chacha20poly1305::XChaCha20Poly1305;
 use rand::TryRng;
 use rand::rngs::SysRng;
-use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
+use crate::hardening::SecretBuf;
 
 /// Length of every symmetric key we use (256-bit).
 pub const KEY_LEN: usize = 32;
@@ -25,8 +25,9 @@ pub const SALT_LEN: usize = 32;
 /// Both ciphers append a 128-bit authentication tag.
 pub const TAG_LEN: usize = 16;
 
-/// A derived symmetric key. Wiped from memory when dropped.
-pub type Key = Zeroizing<[u8; KEY_LEN]>;
+/// A derived symmetric key ([`KEY_LEN`] bytes) on locked pages of its own,
+/// wiped when dropped. See [`SecretBuf`].
+pub type Key = SecretBuf;
 
 // ---------------------------------------------------------------------------
 // Ciphers
@@ -117,7 +118,8 @@ pub fn seal(
     }
 }
 
-/// Verify and decrypt `ciphertext || tag`. The result is wiped on drop.
+/// Verify and decrypt `ciphertext || tag`. It is decrypted in place in a
+/// [`SecretBuf`], so the plaintext never passes through unlocked memory.
 ///
 /// # Errors
 /// [`Error::Decryption`] if the key is wrong or anything (ciphertext, tag or
@@ -128,7 +130,7 @@ pub fn open(
     nonce: &[u8],
     aad: &[u8],
     ciphertext: &[u8],
-) -> Result<Zeroizing<Vec<u8>>> {
+) -> Result<SecretBuf> {
     match cipher {
         CipherId::XChaCha20Poly1305 => open_with::<XChaCha20Poly1305>(key, nonce, aad, ciphertext),
         CipherId::Aes256Gcm => open_with::<Aes256Gcm>(key, nonce, aad, ciphertext),
@@ -158,25 +160,22 @@ fn seal_with<C: Aead + KeyInit>(
         .map_err(|e| Error::Crypto(e.to_string()))
 }
 
-fn open_with<C: Aead + KeyInit>(
+fn open_with<C: AeadInOut + KeyInit>(
     key: &Key,
     nonce: &[u8],
     aad: &[u8],
     ciphertext: &[u8],
-) -> Result<Zeroizing<Vec<u8>>> {
+) -> Result<SecretBuf> {
     let cipher = C::new_from_slice(key.as_slice()).map_err(|e| Error::Crypto(e.to_string()))?;
     let nonce = aead::Nonce::<C>::try_from(nonce)
         .map_err(|_| Error::Crypto("nonce has the wrong length".into()))?;
+    // The ciphertext isn't secret, but it turns into the plaintext in place.
+    // On failure the buffer is wiped when dropped.
+    let mut buf = SecretBuf::from_slice(ciphertext);
     cipher
-        .decrypt(
-            &nonce,
-            Payload {
-                msg: ciphertext,
-                aad,
-            },
-        )
-        .map(Zeroizing::new)
-        .map_err(|_| Error::Decryption)
+        .decrypt_in_place(&nonce, aad, &mut buf)
+        .map_err(|_| Error::Decryption)?;
+    Ok(buf)
 }
 
 // ---------------------------------------------------------------------------
@@ -331,9 +330,12 @@ pub fn derive_key(password: &[u8], salt: &[u8; SALT_LEN], params: KdfParams) -> 
     .map_err(|e| Error::Crypto(e.to_string()))?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon_params);
 
-    let mut key: Key = Zeroizing::new([0u8; KEY_LEN]);
+    // Derived straight into its final, locked home. Returning a `[u8; 32]`
+    // by value would leave a copy on the stack of every caller it passed
+    // through on its way to the unlocked vault.
+    let mut key = SecretBuf::zeroed(KEY_LEN);
     argon
-        .hash_password_into(password, salt, key.as_mut_slice())
+        .hash_password_into(password, salt, &mut key)
         .map_err(|e| Error::Crypto(e.to_string()))?;
     Ok(key)
 }
@@ -484,7 +486,7 @@ mod tests {
 
     #[test]
     fn aead_round_trip_and_tamper() {
-        let key: Key = Zeroizing::new([42u8; KEY_LEN]);
+        let key: Key = SecretBuf::from_slice(&[42u8; KEY_LEN]);
         for cipher in CipherId::ALL {
             let nonce = random_nonce(cipher).unwrap();
             let ct = seal(cipher, &key, &nonce, b"header", b"secret").unwrap();
@@ -507,8 +509,8 @@ mod tests {
 
     #[test]
     fn keys_equal_compares_every_byte() {
-        let a: Key = Zeroizing::new([1u8; KEY_LEN]);
-        let mut b: Key = Zeroizing::new([1u8; KEY_LEN]);
+        let a: Key = SecretBuf::from_slice(&[1u8; KEY_LEN]);
+        let mut b: Key = SecretBuf::from_slice(&[1u8; KEY_LEN]);
         assert!(keys_equal(&a, &b));
         b[KEY_LEN - 1] = 2; // differs only in the last byte
         assert!(!keys_equal(&a, &b));

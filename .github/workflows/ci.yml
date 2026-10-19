@@ -37,6 +37,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
 
+  # cargo-deny already checks RustSec advisories; cargo-audit is the
+  # reference tool for the same database, so run both (M9).
+  audit:
+    name: cargo-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
   fuzz:
     name: Fuzz header parser (smoke)
     runs-on: ubuntu-latest

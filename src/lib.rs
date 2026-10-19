@@ -9,6 +9,7 @@ pub mod crypto;
 pub mod csv_io;
 pub mod error;
 pub mod generator;
+pub mod hardening;
 pub mod paths;
 pub mod tui;
 pub mod vault;

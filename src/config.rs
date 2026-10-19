@@ -29,6 +29,8 @@ pub struct Config {
     pub idle_lock_secs: u32,
     /// Defaults for the password / passphrase generator.
     pub generator: GeneratorConfig,
+    /// Memory protection.
+    pub security: SecurityConfig,
 }
 
 impl Default for Config {
@@ -38,6 +40,7 @@ impl Default for Config {
             clipboard_clear_secs: 20,
             idle_lock_secs: 300,
             generator: GeneratorConfig::default(),
+            security: SecurityConfig::default(),
         }
     }
 }
@@ -71,6 +74,23 @@ impl Default for GeneratorConfig {
             passphrase_separator: "-".into(),
             passphrase_capitalize: false,
         }
+    }
+}
+
+/// The `[security]` section.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SecurityConfig {
+    /// Lock the vault key and decrypted vault contents in RAM (`mlock`) so
+    /// they are never written to swap. Best-effort: if the OS limit
+    /// (`ulimit -l`) is too small, Lockery warns once and carries on.
+    /// Has no effect on Windows yet.
+    pub lock_memory: bool,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self { lock_memory: true }
     }
 }
 
@@ -149,6 +169,17 @@ mod tests {
         assert_eq!(cfg.clipboard_clear_secs, 20);
         assert_eq!(cfg.generator.password_length, 32);
         assert!(cfg.generator.symbols);
+        assert!(
+            cfg.security.lock_memory,
+            "memory locking is on unless turned off"
+        );
+    }
+
+    #[test]
+    fn memory_locking_can_be_turned_off() {
+        let cfg = Config::parse("[security]\nlock_memory = false\n").unwrap();
+        assert!(!cfg.security.lock_memory);
+        assert_eq!(cfg.generator, GeneratorConfig::default());
     }
 
     #[test]

@@ -13,21 +13,23 @@ use crate::vault::EntryKind;
 /// Width of the label column.
 const LABEL_WIDTH: usize = 11;
 
-pub fn render(app: &App, u: &UnlockedState, frame: &mut Frame<'_>, area: Rect) {
+pub fn render<'a>(app: &App, u: &'a UnlockedState, frame: &mut Frame<'_>, area: Rect) {
     let (Some(entry), Some(detail)) = (u.detail_entry(), &u.detail) else {
         return;
     };
     let reveal = detail.reveal;
-    let secret = |value: &str| -> Span<'static> {
+    // Spans borrow from `entry` rather than copying: an owned copy of a
+    // revealed secret would be freed, unwiped, after every frame.
+    let secret = |value: &'a str| -> Span<'a> {
         if reveal {
-            Span::styled(value.to_owned(), theme::SECRET)
+            Span::styled(value, theme::SECRET)
         } else {
             Span::styled(MASK, theme::SECRET)
         }
     };
 
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut field = |label: &str, value: Span<'static>| {
+    let mut lines: Vec<Line<'a>> = Vec::new();
+    let mut field = |label: &str, value: Span<'a>| {
         lines.push(Line::from(vec![
             Span::styled(format!("{label:<LABEL_WIDTH$}"), theme::DIM),
             value,
@@ -40,13 +42,13 @@ pub fn render(app: &App, u: &UnlockedState, frame: &mut Frame<'_>, area: Rect) {
     };
     field("Type", Span::raw(kind));
     if !entry.username.is_empty() {
-        field("Username", Span::raw(entry.username.clone()));
+        field("Username", Span::raw(entry.username.as_str()));
     }
     if !entry.password.is_empty() {
         field("Password", secret(&entry.password));
     }
     for (i, url) in entry.urls.iter().enumerate() {
-        field(if i == 0 { "URL" } else { "" }, Span::raw(url.clone()));
+        field(if i == 0 { "URL" } else { "" }, Span::raw(url.as_str()));
     }
     if !entry.totp.is_empty() {
         field("TOTP", secret(&entry.totp));
@@ -58,7 +60,7 @@ pub fn render(app: &App, u: &UnlockedState, frame: &mut Frame<'_>, area: Rect) {
         let value = if f.hidden {
             secret(&f.value)
         } else {
-            Span::raw(f.value.clone())
+            Span::raw(f.value.as_str())
         };
         field(&f.name, value);
     }
@@ -73,7 +75,7 @@ pub fn render(app: &App, u: &UnlockedState, frame: &mut Frame<'_>, area: Rect) {
     if !entry.notes.is_empty() {
         lines.push(Line::raw(""));
         lines.push(Line::styled("Notes", theme::DIM));
-        lines.extend(entry.notes.lines().map(|l| Line::raw(l.to_owned())));
+        lines.extend(entry.notes.lines().map(Line::raw));
     }
 
     let title = if entry.favorite {

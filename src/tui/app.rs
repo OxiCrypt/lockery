@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use jiff::tz::TimeZone;
 use uuid::Uuid;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use super::entry_form;
 use super::form::{Form, FormEvent, Row, RowId};
@@ -45,6 +45,8 @@ use crate::config::{Config, GeneratorConfig};
 use crate::crypto::calibrate::{self, DEFAULT_TARGET};
 use crate::crypto::{self, CipherId, KdfParams};
 use crate::error::Error;
+use crate::generator::Strength;
+use crate::hardening;
 use crate::paths::{self, VaultName};
 use crate::vault::{Entry, Vault, manage};
 
@@ -220,6 +222,42 @@ pub(super) struct Editor {
     pub form: Form,
     /// The entry being edited, or `None` for a new one.
     pub id: Option<Uuid>,
+    /// Strength of the password field, or `None` if it's empty or hidden.
+    /// Cached rather than worked out every frame, because zxcvbn makes
+    /// copies of the password that it never wipes: once per edit is the
+    /// least we can get away with.
+    pub strength: Option<Strength>,
+}
+
+impl Editor {
+    fn new(form: Form, id: Option<Uuid>) -> Self {
+        let mut editor = Self {
+            form,
+            id,
+            strength: None,
+        };
+        editor.refresh_strength();
+        editor
+    }
+
+    /// Re-judge the password, against the entry's own title and username
+    /// (a password containing them is weaker).
+    fn refresh_strength(&mut self) {
+        let shown = self
+            .form
+            .rows()
+            .iter()
+            .any(|r| r.id == RowId::Password && !r.hidden);
+        let password = self.form.text(RowId::Password);
+        self.strength = (shown && !password.is_empty()).then(|| {
+            let hints = [
+                self.form.text(RowId::Title),
+                self.form.text(RowId::Username),
+            ];
+            let hints: Vec<&str> = hints.iter().map(|h| h.as_str()).collect();
+            Strength::of(&password, &hints)
+        });
+    }
 }
 
 impl UnlockedState {
@@ -484,7 +522,7 @@ impl App {
         match &mut self.screen {
             Screen::Unlock(u) => {
                 if let Some(c) = plain_char {
-                    u.input.push(c);
+                    hardening::push_char(&mut u.input, c);
                     u.error = None;
                 }
             }
@@ -523,7 +561,11 @@ impl App {
                 let Some(editor) = &mut u.editor else { return };
                 match editor.form.input(key) {
                     FormEvent::Next => editor.form.focus_next(),
-                    FormEvent::Changed(id) => entry_form::on_change(&mut editor.form, id),
+                    FormEvent::Changed(id) => {
+                        entry_form::on_change(&mut editor.form, id);
+                        // Any of password, title, username or type matters.
+                        editor.refresh_strength();
+                    }
                     FormEvent::Activated(RowId::AddCustom) => {
                         entry_form::add_custom_field(&mut editor.form);
                     }
@@ -681,7 +723,7 @@ impl App {
                 self.pending = Some(Pending::Unlock);
             }
             Action::Backspace => {
-                u.input.pop();
+                hardening::pop_char(&mut u.input);
             }
             Action::ToggleRevealInput => u.reveal = !u.reveal,
             _ => {}
@@ -822,17 +864,11 @@ impl App {
                 ));
             }
             Action::New => {
-                u.editor = Some(Editor {
-                    form: entry_form::build(None),
-                    id: None,
-                });
+                u.editor = Some(Editor::new(entry_form::build(None), None));
             }
             Action::Edit => {
                 if let Some(entry) = u.current_entry() {
-                    let editor = Editor {
-                        form: entry_form::build(Some(entry)),
-                        id: Some(entry.id),
-                    };
+                    let editor = Editor::new(entry_form::build(Some(entry)), Some(entry.id));
                     u.editor = Some(editor);
                 }
             }
@@ -1072,13 +1108,14 @@ impl App {
                 if let Some(editor) = &mut u.editor {
                     editor.form.set_text(RowId::Password, &generator.value);
                     editor.form.focus_row(RowId::Password);
+                    editor.refresh_strength();
                 }
             }
             GeneratorTarget::NewEntry => {
                 let mut form = entry_form::build(None);
                 form.set_text(RowId::Password, &generator.value);
                 u.detail = None;
-                u.editor = Some(Editor { form, id: None });
+                u.editor = Some(Editor::new(form, None));
             }
         }
         self.set_status(
@@ -1156,6 +1193,10 @@ impl App {
         match Vault::unlock(&u.target.path, u.input.as_bytes()) {
             Ok(vault) => {
                 let target = u.target.clone();
+                if self.config.security.lock_memory && hardening::take_lock_failure() {
+                    self.set_status(StatusKind::Warning, hardening::LOCK_FAILURE_ADVICE);
+                }
+                // Checked second so this more urgent message wins.
                 if let Some(aside) = vault.recovered_from_backup() {
                     self.set_status(
                         StatusKind::Warning,
@@ -1169,7 +1210,7 @@ impl App {
                 self.screen = Screen::Unlocked(Box::new(UnlockedState::new(target, vault)));
             }
             Err(e) => {
-                u.input.clear();
+                u.input.zeroize(); // wipes, keeping the pre-sized buffer
                 u.error = Some(describe_error(&e));
             }
         }
@@ -1186,7 +1227,7 @@ impl App {
         let Ok(name) = VaultName::parse(d.form.text(RowId::VaultName).trim()) else {
             return;
         };
-        let password = Zeroizing::new(d.form.text(RowId::NewPassword));
+        let password = d.form.text(RowId::NewPassword);
         let cipher = CipherId::ALL[d.form.choice(RowId::Cipher)];
 
         let kdf = match self.new_vault_kdf {
@@ -1221,7 +1262,7 @@ impl App {
         let DialogKind::Delete(name) = d.kind.clone() else {
             return;
         };
-        let password = Zeroizing::new(d.form.text(RowId::MasterPassword));
+        let password = d.form.text(RowId::MasterPassword);
 
         match manage::delete_vault(&self.data_dir, &name, password.as_bytes()) {
             Ok(()) => {
@@ -1237,7 +1278,7 @@ impl App {
             return;
         };
         let Some(dialog) = &mut u.dialog else { return };
-        let password = Zeroizing::new(dialog.form.text(RowId::MasterPassword));
+        let password = dialog.form.text(RowId::MasterPassword);
         let path = transfer::expand_path(&dialog.form.text(RowId::FilePath));
 
         if let Err(e) = u.vault.verify_password(password.as_bytes()) {
@@ -1432,11 +1473,11 @@ impl VaultDialog {
         if name.path_in(data_dir).exists() {
             return Err(format!("A vault named '{name}' already exists."));
         }
-        let password = Zeroizing::new(self.form.text(RowId::NewPassword));
+        let password = self.form.text(RowId::NewPassword);
         if password.is_empty() {
             return Err("The master password can't be empty.".into());
         }
-        if *Zeroizing::new(self.form.text(RowId::RepeatPassword)) != *password {
+        if *self.form.text(RowId::RepeatPassword) != *password {
             return Err("The passwords don't match.".into());
         }
         let weak = zxcvbn::zxcvbn(&password, &[name.as_str()]).score() < zxcvbn::Score::Three;

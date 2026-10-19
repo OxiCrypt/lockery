@@ -16,6 +16,7 @@ use lockery::config::Config;
 use lockery::crypto::calibrate::{self, DEFAULT_TARGET};
 use lockery::crypto::{self, CipherId, KdfParams};
 use lockery::csv_io;
+use lockery::hardening;
 use lockery::paths::{self, VaultName};
 use lockery::tui::{self, App, StatusKind, VaultTarget};
 use lockery::vault::Vault;
@@ -25,14 +26,35 @@ use zeroize::Zeroizing;
 use crate::cli::{Cli, Command, InitArgs};
 
 fn main() -> anyhow::Result<()> {
+    // Before anything else, so no secret is ever in a process that could
+    // dump core or be read by a same-user debugger.
+    let hardened = hardening::harden_process();
+    if !hardened.complete() && cfg!(unix) {
+        eprintln!(
+            "Warning: couldn't fully protect this process from core dumps or debuggers \
+             ({hardened:?}). Lockery will still work."
+        );
+    }
+
     let cli = Cli::parse();
     let config = Config::load().context("failed to load configuration")?;
+    hardening::set_lock_memory(config.security.lock_memory);
 
-    match cli.command {
+    let result = match cli.command {
         Some(Command::Init(args)) => init(&config, &args),
         Some(Command::List) => list(&config),
         Some(Command::Import { csv, vault }) => import(&config, &csv, vault.as_deref()),
         None => open(&config, cli.name.as_deref(), cli.path),
+    };
+    // The TUI reports this itself; this covers the plain commands.
+    warn_if_memory_unlocked();
+    result
+}
+
+/// Tell the user (once) if secrets couldn't be locked in RAM.
+fn warn_if_memory_unlocked() {
+    if hardening::take_lock_failure() {
+        eprintln!("Warning: {}", hardening::LOCK_FAILURE_ADVICE);
     }
 }
 

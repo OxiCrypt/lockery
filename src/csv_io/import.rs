@@ -141,8 +141,15 @@ pub fn parse(bytes: &[u8]) -> Result<Imported> {
 
     let mut entries = Vec::new();
     let mut warnings = Vec::new();
-    for record in reader.records() {
-        let record = record.map_err(|e| import_error(&e))?;
+    // One record, reused for every row, rather than a fresh allocation per
+    // row left unwiped in freed memory. The csv crate gives no way to wipe
+    // the record's (or the reader's) buffer; the whole file is plaintext
+    // the user already has on disk, which the threat model notes.
+    let mut record = csv::StringRecord::new();
+    while reader
+        .read_record(&mut record)
+        .map_err(|e| import_error(&e))?
+    {
         let line = record.position().map_or(0, csv::Position::line);
         let row = Row {
             headers: &headers,
