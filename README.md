@@ -38,6 +38,8 @@ How each finished one works:
 
 Early development; there's no usable app yet. You can create, list and unlock vaults from the command line, but there's no way to add or view entries until the terminal UI arrives.
 
+See [ROADMAP.md](ROADMAP.md) for the full milestone plan and progress.
+
 ## Where vaults are stored
 
 | Platform | Location |
