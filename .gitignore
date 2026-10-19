@@ -1,5 +1,5 @@
 /target
-
+.claude/worktrees
 # cargo-fuzz output
 /fuzz/target
 /fuzz/corpus
