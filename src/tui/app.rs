@@ -40,6 +40,7 @@ use super::keymap::{self, Action, Mode};
 use super::search::Search;
 use super::settings::SettingsState;
 use super::transfer::{self, ImportPreview};
+use crate::clipboard::{Clipboard, Copied};
 use crate::config::{Config, GeneratorConfig};
 use crate::crypto::calibrate::{self, DEFAULT_TARGET};
 use crate::crypto::{self, CipherId, KdfParams};
@@ -128,8 +129,12 @@ pub struct App {
     gen_settings: GeneratorConfig,
     /// Whether the generator last made a passphrase (vs a password).
     gen_passphrase: bool,
+    /// Copies to the system clipboard, cleared after a timeout.
+    clipboard: Clipboard,
     quit: bool,
     last_activity: Instant,
+    /// The time of the latest key press or tick, for the clipboard countdown.
+    now: Instant,
     /// Time zone timestamps are shown in (UTC in tests, for stable output).
     pub(super) tz: TimeZone,
     /// Rows visible in the entry list at the last render, for paging.
@@ -289,6 +294,7 @@ impl App {
         target: Option<VaultTarget>,
         now: Instant,
     ) -> Self {
+        let clear_after = Duration::from_secs(config.clipboard_clear_secs.into());
         let mut app = Self {
             config,
             data_dir,
@@ -304,8 +310,10 @@ impl App {
             new_vault_kdf: NewVaultKdf::Calibrate,
             gen_settings: GeneratorConfig::default(),
             gen_passphrase: false,
+            clipboard: Clipboard::system(clear_after),
             quit: false,
             last_activity: now,
+            now,
             tz: TimeZone::system(),
             list_height: Cell::new(10),
         };
@@ -320,6 +328,27 @@ impl App {
     /// Show timestamps in `tz` instead of the system time zone.
     pub fn set_time_zone(&mut self, tz: TimeZone) {
         self.tz = tz;
+    }
+
+    /// Use `clipboard` instead of the system clipboard (tests use a fake).
+    pub fn set_clipboard(&mut self, clipboard: Clipboard) {
+        self.clipboard = clipboard;
+    }
+
+    /// What Lockery has on the clipboard, for the panic and signal handlers.
+    #[must_use]
+    pub fn clipboard_handle(&self) -> Copied {
+        self.clipboard.copied_handle()
+    }
+
+    /// Clear anything Lockery put on the clipboard (when quitting).
+    pub fn clear_clipboard(&mut self) {
+        self.clipboard.clear();
+    }
+
+    /// `(what, seconds left)` while a copied value is waiting to be cleared.
+    pub(super) fn clipboard_countdown(&self) -> Option<(&'static str, u64)> {
+        self.clipboard.countdown(self.now)
     }
 
     /// Choose how Argon2 is set up for vaults created in the app.
@@ -394,6 +423,7 @@ impl App {
             return;
         }
         self.last_activity = now;
+        self.now = now;
         let mode = self.mode();
 
         if let Some(action) = keymap::action_for(mode, &key) {
@@ -405,8 +435,13 @@ impl App {
         }
     }
 
-    /// Called regularly by the event loop; locks the vault when idle.
+    /// Called regularly by the event loop: clears the clipboard when its
+    /// time is up, and locks the vault when idle.
     pub fn tick(&mut self, now: Instant) {
+        self.now = now;
+        if self.clipboard.tick(now) {
+            self.set_status(StatusKind::Info, "Clipboard cleared.");
+        }
         let idle_secs = self.config.idle_lock_secs;
         if idle_secs == 0 || !self.is_unlocked() {
             return;
@@ -757,6 +792,18 @@ impl App {
             return false;
         };
         match action {
+            Action::CopyPassword | Action::CopyUsername => {
+                let Some(entry) = u.current_entry() else {
+                    return true;
+                };
+                let (value, what) = if action == Action::CopyPassword {
+                    (Zeroizing::new(entry.password.clone()), "password")
+                } else {
+                    (Zeroizing::new(entry.username.clone()), "username")
+                };
+                let title = entry.title.clone();
+                self.copy_to_clipboard(&value, what, &title);
+            }
             Action::Import => {
                 u.dialog = Some(VaultDialog::new(DialogKind::Import));
             }
@@ -800,6 +847,29 @@ impl App {
             _ => return false,
         }
         true
+    }
+
+    /// Copy `value` (the `what` of entry `title`) and say so.
+    fn copy_to_clipboard(&mut self, value: &str, what: &'static str, title: &str) {
+        if value.is_empty() {
+            self.set_status(StatusKind::Warning, format!("“{title}” has no {what}."));
+            return;
+        }
+        match self.clipboard.copy(value, what, self.now) {
+            Ok(()) => {
+                let secs = self.config.clipboard_clear_secs;
+                let mut first = what.chars();
+                let what = first
+                    .next()
+                    .map(|c| c.to_uppercase().chain(first).collect::<String>())
+                    .unwrap_or_default();
+                self.set_status(
+                    StatusKind::Info,
+                    format!("{what} copied. The clipboard clears in {secs} s."),
+                );
+            }
+            Err(e) => self.set_status(StatusKind::Error, format!("Couldn't copy: {e}")),
+        }
     }
 
     /// Keys in the CSV import/export dialogs.
@@ -1304,6 +1374,7 @@ impl App {
             let target = u.target.clone();
             self.help_open = false;
             self.confirm = None;
+            self.clipboard.clear();
             self.show_unlock(target); // drops the unlocked state
         }
     }
@@ -1317,6 +1388,7 @@ impl App {
         };
         self.help_open = false;
         self.confirm = None;
+        self.clipboard.clear();
         self.show_picker(current.as_deref());
     }
 }

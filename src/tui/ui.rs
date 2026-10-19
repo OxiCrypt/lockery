@@ -2,7 +2,7 @@
 //! plus the help overlay on top when it's open.
 //!
 //! ```text
-//! ┌ header: app name · vault · entry count ┐
+//! ┌ header: app name · vault · count   (clipboard countdown) ┐
 //! │                                        │
 //! │            current screen              │
 //! │                                        │
@@ -30,6 +30,13 @@ pub fn render(app: &App, frame: &mut Frame<'_>) {
     .areas(frame.area());
 
     frame.render_widget(header_line(app), header);
+    if let Some((what, secs)) = app.clipboard_countdown() {
+        let countdown = format!("{what} on clipboard · clears in {secs}s ");
+        frame.render_widget(
+            Line::styled(countdown, theme::WARNING).right_aligned(),
+            header,
+        );
+    }
 
     match &app.screen {
         Screen::Picker(p) => {

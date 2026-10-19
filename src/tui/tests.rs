@@ -1023,3 +1023,108 @@ fn export_needs_the_password_and_writes_a_private_bitwarden_csv() {
     press(&mut app, KeyCode::Enter);
     assert!(screen(&app, 120, 20).contains("already exists"));
 }
+
+// -- M6: clipboard ------------------------------------------------------------
+
+use crate::clipboard::FakeBackend;
+
+/// An unlocked app whose clipboard is an in-memory fake.
+fn app_with_fake_clipboard(dir: &Path) -> (App, FakeBackend) {
+    let mut app = unlocked_app(dir);
+    let fake = FakeBackend::default();
+    let timeout = Duration::from_secs(Config::default().clipboard_clear_secs.into());
+    app.set_clipboard(fake.clipboard(timeout));
+    (app, fake)
+}
+
+fn press_at(app: &mut App, code: KeyCode, at: Instant) {
+    app.on_key(KeyEvent::new(code, KeyModifiers::NONE), at);
+}
+
+#[test]
+fn copied_password_is_cleared_after_the_timeout() {
+    let dir = setup();
+    let (mut app, fake) = app_with_fake_clipboard(dir.path());
+    let start = Instant::now();
+    press_at(&mut app, KeyCode::Down, start); // Bank
+    press_at(&mut app, KeyCode::Char('c'), start);
+    assert_eq!(fake.text().as_deref(), Some("s3cr3t"));
+    let shown = screen(&app, 90, 12);
+    assert!(
+        shown.contains("Password copied. The clipboard clears in 20 s."),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("password on clipboard · clears in 20s"),
+        "{shown}"
+    );
+
+    app.tick(start + Duration::from_secs(12));
+    assert!(screen(&app, 90, 12).contains("clears in 8s"));
+    assert_eq!(fake.text().as_deref(), Some("s3cr3t"));
+
+    app.tick(start + Duration::from_secs(20));
+    assert_eq!(fake.text(), None);
+    let shown = screen(&app, 90, 12);
+    assert!(
+        shown.contains("Clipboard cleared.") && !shown.contains("on clipboard"),
+        "{shown}"
+    );
+}
+
+#[test]
+fn username_copies_from_the_detail_view() {
+    let dir = setup();
+    let (mut app, fake) = app_with_fake_clipboard(dir.path());
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Char('u'));
+    assert_eq!(fake.text().as_deref(), Some("alice"));
+    assert!(screen(&app, 90, 18).contains("Username copied."));
+}
+
+#[test]
+fn locking_and_quitting_clear_the_clipboard() {
+    let dir = setup();
+    let (mut app, fake) = app_with_fake_clipboard(dir.path());
+    press(&mut app, KeyCode::Char('c'));
+    press(&mut app, KeyCode::Char('L'));
+    assert_eq!(fake.text(), None, "lock clears");
+
+    unlock(&mut app, PASSWORD);
+    press(&mut app, KeyCode::Char('c'));
+    assert!(fake.text().is_some());
+    drop(app);
+    assert_eq!(fake.text(), None, "quitting clears");
+}
+
+#[test]
+fn something_copied_elsewhere_is_left_alone() {
+    let dir = setup();
+    let (mut app, fake) = app_with_fake_clipboard(dir.path());
+    let start = Instant::now();
+    press_at(&mut app, KeyCode::Char('c'), start);
+    *fake.contents.borrow_mut() = Some("copied in the browser".into());
+    app.tick(start + Duration::from_secs(60));
+    press(&mut app, KeyCode::Char('L'));
+    assert_eq!(fake.text().as_deref(), Some("copied in the browser"));
+}
+
+#[test]
+fn copy_explains_missing_values_and_missing_clipboards() {
+    let dir = setup();
+    let (mut app, fake) = app_with_fake_clipboard(dir.path());
+    press(&mut app, KeyCode::Char('G')); // Wi-Fi, a note without password
+    press(&mut app, KeyCode::Char('c'));
+    assert!(screen(&app, 90, 12).contains("“Wi-Fi” has no password."));
+    assert_eq!(fake.text(), None);
+
+    let broken = FakeBackend {
+        broken: true,
+        ..FakeBackend::default()
+    };
+    app.set_clipboard(broken.clipboard(Duration::from_secs(20)));
+    press(&mut app, KeyCode::Home);
+    press(&mut app, KeyCode::Char('c'));
+    assert!(screen(&app, 90, 12).contains("Couldn't copy: no clipboard available"));
+}

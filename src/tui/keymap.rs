@@ -120,6 +120,9 @@ pub enum Action {
     Export,
     /// On the import preview: also import entries that look like duplicates.
     ToggleDuplicates,
+    /// Copy the entry's password / username to the clipboard.
+    CopyPassword,
+    CopyUsername,
     /// Rename the selected vault.
     Rename,
     /// Delete the selected entry or vault (after confirmation).
@@ -203,6 +206,9 @@ pub struct Binding {
     /// Modes this binding is active in.
     pub modes: &'static [Mode],
     pub show: Show,
+    /// A shorter description for the footer, where space is tight (the
+    /// help overlay always shows the full one).
+    pub short: Option<&'static str>,
 }
 
 use Mode::{
@@ -222,6 +228,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Up,
         modes: &[Picker],
         show: Footer,
+        short: None,
     },
     // In the list the highlight makes movement obvious, so the footer's room
     // goes to the entry commands instead.
@@ -232,6 +239,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Up,
         modes: &[List],
         show: Show::Help,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::Down), Key::char('j')],
@@ -240,6 +248,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Down,
         modes: &[Picker, List],
         show: Hidden,
+        short: None,
     },
     // While searching, j and k must be typeable, so only the arrows move.
     Binding {
@@ -249,6 +258,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Up,
         modes: &[Search, Preview],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::Down)],
@@ -257,6 +267,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Down,
         modes: &[Search, Preview],
         show: Hidden,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::PageUp)],
@@ -265,6 +276,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::PageUp,
         modes: &[List, Search],
         show: Show::Help,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::PageDown)],
@@ -273,6 +285,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::PageDown,
         modes: &[List, Search],
         show: Hidden,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::Home)],
@@ -281,6 +294,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Top,
         modes: &[Picker, List],
         show: Show::Help,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::End), Key::char('G')],
@@ -289,6 +303,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Bottom,
         modes: &[Picker, List],
         show: Hidden,
+        short: None,
     },
     // -- Opening, submitting and going back -----------------------------------
     Binding {
@@ -302,6 +317,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Open,
         modes: &[Picker, List],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::Enter)],
@@ -310,6 +326,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Submit,
         modes: &[Unlock],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::Enter)],
@@ -318,6 +335,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Submit,
         modes: &[Dialog],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::Enter)],
@@ -326,6 +344,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Submit,
         modes: &[Preview],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::char(' ')],
@@ -334,6 +353,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::ToggleDuplicates,
         modes: &[Preview],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::Backspace)],
@@ -342,6 +362,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Backspace,
         modes: &[Unlock, Search],
         show: Hidden,
+        short: None,
     },
     Binding {
         keys: &[
@@ -354,6 +375,36 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Back,
         modes: &[Detail],
         show: Footer,
+        short: None,
+    },
+    // -- Copying --------------------------------------------------------------
+    Binding {
+        keys: &[Key::char('c')],
+        label: "c",
+        description: "Copy password",
+        action: Action::CopyPassword,
+        modes: &[List, Detail],
+        show: Footer,
+        short: Some("Copy"),
+    },
+    Binding {
+        keys: &[Key::char('u')],
+        label: "u",
+        description: "Copy username",
+        action: Action::CopyUsername,
+        modes: &[Detail],
+        show: Footer,
+        short: Some("User"),
+    },
+    // No footer room in the list view; listed in its help overlay.
+    Binding {
+        keys: &[Key::char('u')],
+        label: "u",
+        description: "Copy username",
+        action: Action::CopyUsername,
+        modes: &[List],
+        show: Show::Help,
+        short: None,
     },
     // -- Forms ----------------------------------------------------------------
     Binding {
@@ -363,6 +414,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::NextField,
         modes: &[Edit, Dialog, Generator, Settings],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::BackTab)],
@@ -371,6 +423,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::PrevField,
         modes: &[Edit, Dialog, Generator, Settings],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::ctrl('s')],
@@ -379,6 +432,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Save,
         modes: &[Edit],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::ctrl('s')],
@@ -387,6 +441,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Save,
         modes: &[Settings],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::ctrl('g')],
@@ -395,6 +450,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Generate,
         modes: &[Edit],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::Enter)],
@@ -403,6 +459,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::UseGenerated,
         modes: &[Generator],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::ctrl('g')],
@@ -411,6 +468,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Regenerate,
         modes: &[Generator],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::Esc)],
@@ -419,6 +477,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Cancel,
         modes: &[Generator],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::Esc)],
@@ -427,6 +486,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Cancel,
         modes: &[Edit, Dialog, Settings, Preview],
         show: Footer,
+        short: None,
     },
     // -- Confirmations --------------------------------------------------------
     Binding {
@@ -436,6 +496,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Yes,
         modes: &[Confirm],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::char('n'), Key::plain(KeyCode::Esc)],
@@ -444,6 +505,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::No,
         modes: &[Confirm],
         show: Footer,
+        short: None,
     },
     // -- Searching ------------------------------------------------------------
     Binding {
@@ -453,6 +515,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Search,
         modes: &[List],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::Enter)],
@@ -461,6 +524,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::AcceptSearch,
         modes: &[Search],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::plain(KeyCode::Esc)],
@@ -469,6 +533,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::ClearSearch,
         modes: &[Search],
         show: Footer,
+        short: None,
     },
     // Same key in the list, where it only matters if a filter is active, so
     // it stays out of the footer.
@@ -479,6 +544,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::ClearSearch,
         modes: &[List],
         show: Show::Help,
+        short: None,
     },
     // -- Entries and vaults ---------------------------------------------------
     Binding {
@@ -488,6 +554,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::New,
         modes: &[List, Picker],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::char('e')],
@@ -496,6 +563,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Edit,
         modes: &[List, Detail],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::char('r')],
@@ -504,6 +572,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Rename,
         modes: &[Picker],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::char('d')],
@@ -512,6 +581,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Delete,
         modes: &[List, Detail, Picker],
         show: Footer,
+        short: None,
     },
     // The footer has no room left in the list and detail views; it's in
     // the help overlay, and Ctrl-g in the editor is in that footer.
@@ -522,6 +592,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Generate,
         modes: &[List, Detail],
         show: Show::Help,
+        short: None,
     },
     Binding {
         keys: &[Key::char('i')],
@@ -530,6 +601,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Import,
         modes: &[List, Detail],
         show: Show::Help,
+        short: None,
     },
     Binding {
         keys: &[Key::char('x')],
@@ -538,6 +610,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Export,
         modes: &[List, Detail],
         show: Show::Help,
+        short: None,
     },
     Binding {
         keys: &[Key::char('s')],
@@ -546,6 +619,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Settings,
         modes: &[List, Detail],
         show: Show::Help,
+        short: None,
     },
     // -- Secrets --------------------------------------------------------------
     Binding {
@@ -555,6 +629,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::ToggleReveal,
         modes: &[Detail],
         show: Footer,
+        short: Some("Show"),
     },
     Binding {
         keys: &[Key::ctrl('r')],
@@ -563,6 +638,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::ToggleRevealInput,
         modes: &[Unlock, Edit, Dialog, Settings],
         show: Footer,
+        short: None,
     },
     // -- Locking and switching ------------------------------------------------
     Binding {
@@ -572,22 +648,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Lock,
         modes: &[List, Detail],
         show: Footer,
-    },
-    Binding {
-        keys: &[Key::char('V')],
-        label: "V",
-        description: "Vaults",
-        action: Action::SwitchVault,
-        modes: &[List, Detail],
-        show: Footer,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Tab)],
-        label: "Tab",
-        description: "Vaults",
-        action: Action::SwitchVault,
-        modes: &[Unlock],
-        show: Footer,
+        short: None,
     },
     // -- Quitting and help ----------------------------------------------------
     Binding {
@@ -597,6 +658,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Quit,
         modes: &[List, Detail],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::char('q'), Key::plain(KeyCode::Esc)],
@@ -605,6 +667,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Quit,
         modes: &[Picker],
         show: Footer,
+        short: None,
     },
     // `q` must stay typeable on the unlock screen, so only Esc quits there.
     Binding {
@@ -614,6 +677,27 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Quit,
         modes: &[Unlock],
         show: Footer,
+        short: None,
+    },
+    // After Quit, so that when the footer is short of room it drops this
+    // rather than Quit.
+    Binding {
+        keys: &[Key::char('V')],
+        label: "V",
+        description: "Vaults",
+        action: Action::SwitchVault,
+        modes: &[List, Detail],
+        show: Footer,
+        short: None,
+    },
+    Binding {
+        keys: &[Key::plain(KeyCode::Tab)],
+        label: "Tab",
+        description: "Vaults",
+        action: Action::SwitchVault,
+        modes: &[Unlock],
+        show: Footer,
+        short: None,
     },
     Binding {
         keys: &[Key::char('?'), Key::plain(KeyCode::F(1))],
@@ -622,6 +706,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Help,
         modes: &[Picker, List, Detail, Preview],
         show: Footer,
+        short: None,
     },
     // `?` must stay typeable in text fields, so they use F1.
     Binding {
@@ -631,6 +716,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Help,
         modes: &[Unlock, Search, Edit, Dialog, Generator, Settings],
         show: Footer,
+        short: None,
     },
     Binding {
         keys: &[
@@ -644,6 +730,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::CloseHelp,
         modes: &[Help],
         show: Footer,
+        short: None,
     },
     // Ctrl-C always quits, even while typing.
     Binding {
@@ -653,6 +740,7 @@ pub static BINDINGS: &[Binding] = &[
         action: Action::Quit,
         modes: &Mode::ALL,
         show: Show::Help,
+        short: None,
     },
 ];
 

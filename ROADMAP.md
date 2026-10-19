@@ -14,10 +14,10 @@ follow in M10.
 | [M3: TUI core](#m3-tui-core) | ✅ Done |
 | [M4: Editing](#m4-editing) | ✅ Done |
 | [M5: Generators](#m5-generators) | ✅ Done |
-| [M6: Clipboard](#m6-clipboard) | ⏳ Next |
+| [M6: Clipboard](#m6-clipboard) | ✅ Done |
 | [M7: CSV import and export](#m7-csv-import-and-export) | ✅ Done (ahead of M6) |
 | [M8: Settings](#m8-settings) | ✅ Done (ahead of M6–M7) |
-| [M9: Hardening and alpha 0.1](#m9-hardening-and-alpha-01) | ⏳ |
+| [M9: Hardening and alpha 0.1](#m9-hardening-and-alpha-01) | ⏳ Next |
 | [M10: Passkeys](#m10-passkeys-post-alpha) | ⏳ After alpha |
 
 ---
@@ -132,14 +132,18 @@ follow in M10.
 
 ## M6: Clipboard
 
-⏳
+✅ Done
 
-- [ ] Copy username (`u`) and password (`c`) (`src/clipboard.rs`)
-- [ ] Auto-clear after a configurable time (default 20 s), only if the clipboard still holds what Lockery copied
-- [ ] Countdown in the footer
-- [ ] Clipboard also cleared on lock, quit, panic, SIGTERM and SIGHUP
-- [ ] Clipboard managers asked not to keep a history, where the OS supports it
-- [ ] Manual test on Wayland, X11, macOS and Windows
+- [x] Copy password (`c`) and username (`u`) from the list or detail view (`src/clipboard.rs`)
+- [x] Auto-clear after `clipboard_clear_secs` (default 20 s), only if the clipboard still holds what Lockery copied
+- [x] Countdown in the header ("password on clipboard · clears in 17s"); the footer had no room
+- [x] Cleared on lock, switching vault, quit, panic, SIGTERM, SIGHUP, SIGINT and SIGQUIT (`src/tui/mod.rs`)
+- [x] Copies ask clipboard managers not to keep them: Windows history, cloud sync and monitoring; macOS; KDE's password-manager hint on Linux
+- [x] Clipboard connected on first copy, so Lockery still works without one (e.g. over SSH) and explains why copying fails
+- [x] Tests with an in-memory clipboard: timeout, a new copy restarting it, leaving the user's own copies alone, lock and quit clearing, errors
+- [x] Manual test on Wayland (Hyprland): copy, history hint, timeout, quit and SIGTERM all clear
+- [ ] Manual test on X11, macOS and Windows
+- [ ] Panic path tested only through its pieces (the shared copy and the clear function), not with a real crash
 
 ## M7: CSV import and export
 
