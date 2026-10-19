@@ -1,0 +1,6 @@
+[env]
+# Tell insta where the workspace is, so it doesn't spawn `cargo metadata`
+# from inside the test process. A child forked from a multi-threaded test
+# binary briefly inherits every open file descriptor, including vault lock
+# files held by other tests, which made the lock tests flaky.
+INSTA_WORKSPACE_ROOT = { value = "", relative = true }

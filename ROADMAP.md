@@ -11,8 +11,8 @@ follow in M10.
 | [M0: Project skeleton](#m0-project-skeleton) | ✅ Done |
 | [M1: Crypto, file format and storage](#m1-crypto-file-format-and-storage) | ✅ Done |
 | [M2: Entry model, named vaults and CLI](#m2-entry-model-named-vaults-and-cli) | ✅ Done |
-| [M3: TUI core](#m3-tui-core) | ⏳ Next |
-| [M4: Editing](#m4-editing) | ⏳ |
+| [M3: TUI core](#m3-tui-core) | ✅ Done |
+| [M4: Editing](#m4-editing) | ⏳ Next |
 | [M5: Generators](#m5-generators) | ⏳ |
 | [M6: Clipboard](#m6-clipboard) | ⏳ |
 | [M7: CSV import and export](#m7-csv-import-and-export) | ⏳ |
@@ -76,19 +76,22 @@ follow in M10.
 
 ## M3: TUI core
 
-⏳ Next
+✅ Done
 
-- [ ] App state machine: vault picker, unlock, list, detail, help (`src/tui/app.rs`)
-- [ ] Single keymap table that drives both input handling and the footer hints (`src/tui/keymap.rs`)
-- [ ] Footer hint bar showing the keys for the current screen (`src/tui/widgets/footer.rs`)
-- [ ] `?` help overlay built from the same keymap
-- [ ] Vault picker: list vaults; `Tab` from the unlock screen; `V` to switch vaults
-- [ ] Unlock screen with masked password input
-- [ ] Entry list with fuzzy search (`/`)
-- [ ] Detail view with passwords masked; `Space` shows them
-- [ ] Manual lock (`L`) and idle auto-lock
-- [ ] Terminal restored on panic
-- [ ] Screen snapshot tests (`insta` with ratatui's `TestBackend`) and a test that every key has a footer hint
+- [x] App state machine: vault picker, unlock, list, search, detail, help; no terminal I/O, so it's fully testable (`src/tui/app.rs`)
+- [x] Single keymap table that drives both input handling and the hints (`src/tui/keymap.rs`)
+- [x] Footer hint bar for the current screen; hints that don't fit are dropped (`src/tui/widgets/footer.rs`)
+- [x] `?` help overlay built from the same keymap (`src/tui/views/help.rs`)
+- [x] Vault picker: `Tab` from the unlock screen, `V` from an open vault (locks it first)
+- [x] Unlock screen: masked input, `Ctrl-r` to show it, "Unlocking…" while Argon2 runs
+- [x] Entry list with fuzzy search (`/`) over title, username, URLs and tags, never secrets (`src/tui/search.rs`)
+- [x] Detail view with secrets masked; `Space` shows them, and they're masked again whenever the entry is reopened
+- [x] Manual lock (`L`) and idle auto-lock (`idle_lock_secs` in the config, default 5 min)
+- [x] Terminal restored on exit and on panic
+- [x] Tests (`src/tui/tests.rs`):
+  - [x] behaviour driven through key presses
+  - [x] `insta` snapshots of every screen (`src/tui/snapshots/`)
+  - [x] keymap checks: no key bound twice in a mode, every key reaches its action, and letters stay typeable in text fields
 
 ## M4: Editing
 

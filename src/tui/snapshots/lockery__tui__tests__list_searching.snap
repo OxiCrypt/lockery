@@ -1,0 +1,16 @@
+---
+source: src/tui/tests.rs
+expression: "screen(&app, 70, 12)"
+---
+" Lockery · default · 3 entries                                        "
+" / gh                                                                 "
+"╭ Entries ───────────────────────────────────────────────────────────╮"
+"│  Title                    Username             URL                 │"
+"│› ★ GitHub                 octocat              https://github.com  │"
+"│                                                                    │"
+"│                                                                    │"
+"│                                                                    │"
+"│                                                                    │"
+"╰────────────────────────────────────────────────────────────────────╯"
+"                                                                      "
+" ↑↓ Move  Enter Done  Esc Clear search                                "

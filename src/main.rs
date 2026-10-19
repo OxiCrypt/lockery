@@ -1,12 +1,14 @@
 //! Binary entry point: parse arguments, load config, dispatch.
 //!
-//! Until the TUI lands (M3), opening a vault unlocks it and prints a short
-//! summary, which proves the password and file are good.
+//! `lockery` with no subcommand opens the TUI on a terminal; everything
+//! else is a plain command-line operation.
 
 mod cli;
 mod prompt;
 
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
+use std::time::Instant;
 
 use anyhow::{Context, bail};
 use clap::Parser;
@@ -14,6 +16,7 @@ use lockery::config::Config;
 use lockery::crypto::calibrate::{self, DEFAULT_TARGET};
 use lockery::crypto::{CipherId, KdfParams};
 use lockery::paths::{self, VaultName};
+use lockery::tui::{self, App, StatusKind, VaultTarget};
 use lockery::vault::Vault;
 use lockery::vault::format::CURRENT_FORMAT_VERSION;
 
@@ -112,23 +115,55 @@ fn list(config: &Config) -> anyhow::Result<()> {
 }
 
 /// `lockery [NAME]` / `lockery --path FILE`: unlock a vault.
+///
+/// On a terminal this starts the TUI. When stdin or stdout isn't a terminal
+/// (scripts, tests), it unlocks the vault and prints a short summary.
 fn open(config: &Config, name: Option<&str>, path: Option<PathBuf>) -> anyhow::Result<()> {
-    let (label, path) = if let Some(path) = path {
-        (path.display().to_string(), path)
+    let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
+    let data_dir = paths::data_dir()?;
+
+    let target = if let Some(path) = path {
+        Some(VaultTarget {
+            label: path.display().to_string(),
+            path,
+        })
     } else {
-        let name = vault_name(config, name)?;
-        let path = name.path_in(&paths::data_dir()?);
-        if !path.exists() {
-            let init = if name.as_str() == config.primary_vault {
+        let vault = vault_name(config, name)?;
+        let target = VaultTarget::named(&vault, &data_dir);
+        if target.path.exists() {
+            Some(target)
+        } else if interactive && name.is_none() {
+            // No primary vault yet: let the picker show what does exist.
+            None
+        } else {
+            let init = if vault.as_str() == config.primary_vault {
                 "lockery init".to_owned()
             } else {
-                format!("lockery init {name}")
+                format!("lockery init {vault}")
             };
-            bail!("vault '{name}' doesn't exist yet; create it with `{init}`");
+            bail!("vault '{vault}' doesn't exist yet; create it with `{init}`");
         }
-        (name.to_string(), path)
     };
 
+    if interactive {
+        let no_primary = target.is_none();
+        let mut app = App::new(config.clone(), data_dir, target, Instant::now());
+        if no_primary {
+            app.set_status(
+                StatusKind::Info,
+                format!(
+                    "Your primary vault '{}' doesn't exist yet.",
+                    config.primary_vault
+                ),
+            );
+        }
+        tui::run(&mut app)?;
+        return Ok(());
+    }
+
+    let Some(VaultTarget { label, path }) = target else {
+        unreachable!("non-interactive runs always have a target");
+    };
     let password = prompt::password(&format!("Master password for '{label}': "))?;
     let vault = Vault::unlock(&path, password.as_bytes())?;
     drop(password);
@@ -149,7 +184,6 @@ fn open(config: &Config, name: Option<&str>, path: Option<PathBuf>) -> anyhow::R
     if vault.opened_format_version() < CURRENT_FORMAT_VERSION {
         println!("  This vault uses an older file format and will be upgraded on the next save.");
     }
-    println!("The interactive interface arrives in milestone M3.");
     Ok(())
 }
 

@@ -1,0 +1,16 @@
+---
+source: src/tui/tests.rs
+expression: "screen(&app, 80, 12)"
+---
+" Lockery · default · 3 entries                                                  "
+"╭ Entries ─────────────────────────────────────────────────────────────────────╮"
+"│  Title                        Username                URL                    │"
+"│› ★ GitHub                     octocat                 https://github.com     │"
+"│  Bank                         alice                   https://bank.example   │"
+"│  Wi-Fi                                                                       │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
+"                                                                                "
+" ↑↓/jk Move  Enter Open  / Search  L Lock  V Switch vault  ? Help  q Quit       "

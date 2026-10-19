@@ -1,0 +1,22 @@
+---
+source: src/tui/tests.rs
+expression: masked
+---
+" Lockery · default · 3 entries                              "
+"╭ Bank ────────────────────────────────────────────────────╮"
+"│ Type       Login                                         │"
+"│ Username   alice                                         │"
+"│ Password   ••••••••                                      │"
+"│ URL        https://bank.example                          │"
+"│ PIN        ••••••••                                      │"
+"│ Created    2023-11-14 22:13                              │"
+"│ Modified   2023-11-14 22:13                              │"
+"│                                                          │"
+"│ Notes                                                    │"
+"│ Branch: Main St                                          │"
+"│ Call before travelling                                   │"
+"│                                                          │"
+"│                                                          │"
+"╰──────────────────────────────────────────────────────────╯"
+"                                                            "
+" Esc Back  Space Show/hide secrets  L Lock  V Switch vault  "

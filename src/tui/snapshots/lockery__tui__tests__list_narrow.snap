@@ -1,0 +1,14 @@
+---
+source: src/tui/tests.rs
+expression: "screen(&app, 40, 10)"
+---
+" Lockery · default · 3 entries          "
+"╭ Entries ─────────────────────────────╮"
+"│  Title        Username    URL        │"
+"│› ★ GitHub     octocat     https://git│"
+"│  Bank         alice       https://ban│"
+"│  Wi-Fi                               │"
+"│                                      │"
+"╰──────────────────────────────────────╯"
+"                                        "
+" ↑↓/jk Move  Enter Open  / Search       "

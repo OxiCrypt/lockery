@@ -1,0 +1,20 @@
+---
+source: src/tui/tests.rs
+expression: "screen(&app, 60, 16)"
+---
+" Lockery · default · locked                                 "
+"                                                            "
+"                                                            "
+"     ╭ Unlock ────────────────────────────────────────╮     "
+"     │                                                │     "
+"     │  Vault  default                                │     "
+"     │                                                │     "
+"     │  Master password                               │     "
+"     │  •••                                           │     "
+"     │                                                │     "
+"     │                                                │     "
+"     │                                                │     "
+"     ╰────────────────────────────────────────────────╯     "
+"                                                            "
+"                                                            "
+" Enter Unlock  Ctrl-r Show/hide password  Tab Other vault   "
