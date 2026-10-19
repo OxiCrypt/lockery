@@ -1,0 +1,26 @@
+---
+source: src/tui/tests.rs
+expression: masked
+---
+" Lockery · default · 3 entries                                        "
+"╭ Edit “Bank” ───────────────────────────────────────────────────────╮"
+"│   Type        ‹ Login ›                                            │"
+"│ › Title       Bank                                                 │"
+"│   Username    alice                                                │"
+"│   Password    ••••••                                               │"
+"│   URLs        https://bank.example                                 │"
+"│                                                                    │"
+"│                                                                    │"
+"│   TOTP         secret or otpauth:// URI                            │"
+"│   Tags         comma-separated                                     │"
+"│   Favourite   [ ] no                                               │"
+"│   Field name  PIN                                                  │"
+"│     Value     ••••                                                 │"
+"│     Hidden    [x] yes                                              │"
+"│   + Add custom field                                               │"
+"│   Notes       Branch: Main St                                      │"
+"│                                                                    │"
+"│ Space/←→ change toggles and choices · Enter on a button presses it │"
+"╰────────────────────────────────────────────────────────────────────╯"
+"                                                                      "
+" Tab Next field  Shift-Tab Previous  Ctrl-s Save  Esc Cancel  F1 Help "

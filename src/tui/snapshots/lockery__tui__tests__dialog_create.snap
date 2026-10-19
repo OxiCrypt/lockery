@@ -1,0 +1,20 @@
+---
+source: src/tui/tests.rs
+expression: "screen(&app, 70, 16)"
+---
+" Lockery · choose a vault                                             "
+"          ╭ Vaults ────────────────────────────────────────╮          "
+"          │› default  primary                              │          "
+"   ╭ New vault ───────────────────────────────────────────────────╮   "
+"   │                                                              │   "
+"   │ › Name              letters, digits, - or _                  │   "
+"   │   Master password                                            │   "
+"   │   Repeat password                                            │   "
+"   │   Cipher           ‹ XChaCha20-Poly1305 ›                    │   "
+"   │                                                              │   "
+"   │                                                              │   "
+"   │                                                              │   "
+"   ╰──────────────────────────────────────────────────────────────╯   "
+"          ╰────────────────────────────────────────────────╯          "
+"                                                                      "
+" Enter Confirm  Tab Next field  Shift-Tab Previous  F1 Help           "

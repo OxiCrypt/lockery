@@ -18,8 +18,8 @@ pub fn render(app: &App, p: &PickerState, frame: &mut Frame<'_>, area: Rect) {
             Line::raw("No vaults yet."),
             Line::raw(""),
             Line::from(vec![
-                Span::raw("Quit and run "),
-                Span::styled("lockery init", theme::KEY),
+                Span::raw("Press "),
+                Span::styled("n", theme::KEY),
                 Span::raw(" to create one."),
             ]),
             Line::raw(""),

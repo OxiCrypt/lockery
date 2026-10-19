@@ -1,0 +1,18 @@
+---
+source: src/tui/tests.rs
+expression: "screen(&app, 70, 14)"
+---
+" Lockery · default · 3 entries                                        "
+"╭ Entries ───────────────────────────────────────────────────────────╮"
+"│  Title                    Username             URL                 │"
+"│  ★ GitHub                 octocat              https://github.com  │"
+"│› Bank╭ Confirm ─────────────────────────────────────────────╮xample│"
+"│  Wi-F│ Delete “Bank”? This can't be undone.                 │      │"
+"│      │                                                      │      │"
+"│      │ y yes   n no                                         │      │"
+"│      │                                                      │      │"
+"│      ╰──────────────────────────────────────────────────────╯      │"
+"│                                                                    │"
+"╰────────────────────────────────────────────────────────────────────╯"
+"                                                                      "
+" y Yes  n/Esc No                                                      "

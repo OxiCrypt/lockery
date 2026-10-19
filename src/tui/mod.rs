@@ -9,6 +9,8 @@
 //! and ratatui's panic hook puts the terminal back even if Lockery panics.
 
 pub mod app;
+mod entry_form;
+mod form;
 pub mod keymap;
 pub mod search;
 mod theme;
@@ -45,10 +47,11 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
     while !app.should_quit() {
         terminal.draw(|frame| ui::render(app, frame))?;
 
-        // Unlocking blocks for about a second (Argon2). The frame just drawn
-        // shows "Unlocking…"; now do the work and redraw.
-        if app.unlock_pending() {
-            app.perform_unlock();
+        // Unlocking, creating or deleting a vault runs Argon2 for about a
+        // second. The frame just drawn shows a "working" message; now do
+        // the work and redraw.
+        if app.has_pending() {
+            app.run_pending();
             continue;
         }
 

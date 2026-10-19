@@ -12,8 +12,8 @@ follow in M10.
 | [M1: Crypto, file format and storage](#m1-crypto-file-format-and-storage) | ✅ Done |
 | [M2: Entry model, named vaults and CLI](#m2-entry-model-named-vaults-and-cli) | ✅ Done |
 | [M3: TUI core](#m3-tui-core) | ✅ Done |
-| [M4: Editing](#m4-editing) | ⏳ Next |
-| [M5: Generators](#m5-generators) | ⏳ |
+| [M4: Editing](#m4-editing) | ✅ Done |
+| [M5: Generators](#m5-generators) | ⏳ Next |
 | [M6: Clipboard](#m6-clipboard) | ⏳ |
 | [M7: CSV import and export](#m7-csv-import-and-export) | ⏳ |
 | [M8: Settings](#m8-settings) | ⏳ |
@@ -95,13 +95,24 @@ follow in M10.
 
 ## M4: Editing
 
-⏳
+✅ Done
 
-- [ ] Add/edit form: `Tab`/`Shift-Tab` between fields, `Ctrl-s` to save, `Esc` to cancel
-- [ ] Multi-line notes editor (`ratatui-textarea`)
-- [ ] Custom fields and tags
-- [ ] Confirmation before delete
-- [ ] Rename and delete vaults from the picker (delete asks for the master password and the vault name)
+- [x] Add (`n`) and edit (`e`) entries in a form (`src/tui/entry_form.rs`, `src/tui/views/edit.rs`)
+  - [x] `Tab`/`Shift-Tab` between fields, `Ctrl-s` to save, `Esc` to cancel
+  - [x] cancelling asks first if anything was changed
+  - [x] a title is required
+  - [x] login-only fields hide for secure notes; their values are kept
+- [x] Shared form widget: text fields, toggles, choices, buttons (`src/tui/form.rs`)
+  - [x] text is wiped from memory when the form closes, and secret fields keep no undo history
+- [x] Multi-line notes and URLs (`ratatui-textarea`)
+- [x] Custom fields (name, value, hidden) and comma-separated tags
+- [x] Delete entries (`d`), with a y/n confirmation (`src/tui/widgets/confirm.rs`)
+- [x] Vault management in the picker (`src/vault/manage.rs`, `src/tui/views/dialog.rs`):
+  - [x] create (`n`): name, password twice, cipher; Argon2 calibrated; easy-to-guess passwords need a second Enter
+  - [x] rename (`r`); warns if it was the primary vault
+  - [x] delete (`d`): needs the master password and the vault name typed out; removes the backup and damaged copies too
+- [x] `F1` opens help from text fields (where `?` must stay typeable); the footer always keeps room for the Help hint
+- [x] Tests: form and entry-form units, editing and vault-management flows checked against the files on disk, snapshots of the new screens
 
 ## M5: Generators
 

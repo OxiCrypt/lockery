@@ -5,8 +5,8 @@
 //! here ([`hints`]). The hints therefore can't drift from what the keys
 //! actually do.
 //!
-//! In text-entry modes ([`Mode::is_text_entry`]), plain printable keys that
-//! aren't bound are typed into the field instead.
+//! In text-entry modes ([`Mode::is_text_entry`]), keys that aren't bound
+//! go to the focused text field instead (typing, cursor movement, ...).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -23,24 +23,36 @@ pub enum Mode {
     Search,
     /// Looking at a single entry.
     Detail,
+    /// Adding or editing an entry.
+    Edit,
+    /// A small form over the vault picker (create, rename, delete vault).
+    Dialog,
+    /// A yes/no question.
+    Confirm,
     /// The help overlay is open.
     Help,
 }
 
 impl Mode {
-    /// Modes where unbound printable keys are typed into a text field.
+    /// Modes where keys that aren't bound go to a text field instead.
     #[must_use]
     pub const fn is_text_entry(self) -> bool {
-        matches!(self, Self::Unlock | Self::Search)
+        matches!(
+            self,
+            Self::Unlock | Self::Search | Self::Edit | Self::Dialog
+        )
     }
 
     /// Every mode, for tests and the help overlay.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 9] = [
         Self::Picker,
         Self::Unlock,
         Self::List,
         Self::Search,
         Self::Detail,
+        Self::Edit,
+        Self::Dialog,
+        Self::Confirm,
         Self::Help,
     ];
 }
@@ -56,7 +68,7 @@ pub enum Action {
     Bottom,
     /// Open the selected vault or entry.
     Open,
-    /// Submit the text field (unlock).
+    /// Submit the unlock screen or a dialog.
     Submit,
     /// Delete the character before the cursor in a text field.
     Backspace,
@@ -70,14 +82,30 @@ pub enum Action {
     ClearSearch,
     /// Show or hide passwords and other secret fields.
     ToggleReveal,
-    /// Show or hide the password being typed on the unlock screen.
+    /// Show or hide what's being typed into password fields.
     ToggleRevealInput,
     /// Lock the vault (and stay on its unlock screen).
     Lock,
     /// Lock the vault and go to the vault picker.
     SwitchVault,
-    /// Refresh the vault picker.
-    Refresh,
+    /// Create a new entry (in a vault) or a new vault (in the picker).
+    New,
+    /// Edit the selected entry.
+    Edit,
+    /// Rename the selected vault.
+    Rename,
+    /// Delete the selected entry or vault (after confirmation).
+    Delete,
+    /// Move to the next / previous field of a form.
+    NextField,
+    PrevField,
+    /// Save the entry being edited.
+    Save,
+    /// Leave a form or dialog without saving.
+    Cancel,
+    /// Answer a confirmation question.
+    Yes,
+    No,
     Help,
     CloseHelp,
     Quit,
@@ -109,12 +137,13 @@ impl Key {
         }
     }
 
-    /// Whether `event` is this key. Shift is ignored for characters, since
-    /// terminals disagree on whether `?` or `G` arrive with SHIFT set.
+    /// Whether `event` is this key. Shift is ignored for characters and
+    /// Shift-Tab (`BackTab`), since terminals disagree on whether `?`, `G`
+    /// or Shift-Tab arrive with SHIFT set.
     #[must_use]
     pub fn matches(self, event: &KeyEvent) -> bool {
         let mods = match event.code {
-            KeyCode::Char(_) => event.modifiers - KeyModifiers::SHIFT,
+            KeyCode::Char(_) | KeyCode::BackTab => event.modifiers - KeyModifiers::SHIFT,
             _ => event.modifiers,
         };
         self.code == event.code && self.mods == mods
@@ -148,11 +177,12 @@ pub struct Binding {
     pub show: Show,
 }
 
-use Mode::{Detail, Help, List, Picker, Search, Unlock};
+use Mode::{Confirm, Detail, Dialog, Edit, Help, List, Picker, Search, Unlock};
 use Show::{Footer, Hidden};
 
 /// All key bindings. Order matters: it is the order of the hints, so the
-/// most useful keys come first (the footer drops hints that don't fit).
+/// most useful keys come first (the footer drops hints that don't fit, but
+/// always keeps room for the Help hint).
 pub static BINDINGS: &[Binding] = &[
     // -- Moving around --------------------------------------------------------
     Binding {
@@ -160,8 +190,18 @@ pub static BINDINGS: &[Binding] = &[
         label: "↑↓/jk",
         description: "Move",
         action: Action::Up,
-        modes: &[Picker, List],
+        modes: &[Picker],
         show: Footer,
+    },
+    // In the list the highlight makes movement obvious, so the footer's room
+    // goes to the entry commands instead.
+    Binding {
+        keys: &[Key::plain(KeyCode::Up), Key::char('k')],
+        label: "↑↓/jk",
+        description: "Move",
+        action: Action::Up,
+        modes: &[List],
+        show: Show::Help,
     },
     Binding {
         keys: &[Key::plain(KeyCode::Down), Key::char('j')],
@@ -220,7 +260,7 @@ pub static BINDINGS: &[Binding] = &[
         modes: &[Picker, List],
         show: Hidden,
     },
-    // -- Opening and going back -----------------------------------------------
+    // -- Opening, submitting and going back -----------------------------------
     Binding {
         keys: &[
             Key::plain(KeyCode::Enter),
@@ -242,6 +282,14 @@ pub static BINDINGS: &[Binding] = &[
         show: Footer,
     },
     Binding {
+        keys: &[Key::plain(KeyCode::Enter)],
+        label: "Enter",
+        description: "Confirm",
+        action: Action::Submit,
+        modes: &[Dialog],
+        show: Footer,
+    },
+    Binding {
         keys: &[Key::plain(KeyCode::Backspace)],
         label: "Bksp",
         description: "Delete character",
@@ -259,6 +307,56 @@ pub static BINDINGS: &[Binding] = &[
         description: "Back",
         action: Action::Back,
         modes: &[Detail],
+        show: Footer,
+    },
+    // -- Forms ----------------------------------------------------------------
+    Binding {
+        keys: &[Key::plain(KeyCode::Tab)],
+        label: "Tab",
+        description: "Next field",
+        action: Action::NextField,
+        modes: &[Edit, Dialog],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::plain(KeyCode::BackTab)],
+        label: "Shift-Tab",
+        description: "Previous",
+        action: Action::PrevField,
+        modes: &[Edit, Dialog],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::ctrl('s')],
+        label: "Ctrl-s",
+        description: "Save",
+        action: Action::Save,
+        modes: &[Edit],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::plain(KeyCode::Esc)],
+        label: "Esc",
+        description: "Cancel",
+        action: Action::Cancel,
+        modes: &[Edit, Dialog],
+        show: Footer,
+    },
+    // -- Confirmations --------------------------------------------------------
+    Binding {
+        keys: &[Key::char('y')],
+        label: "y",
+        description: "Yes",
+        action: Action::Yes,
+        modes: &[Confirm],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::char('n'), Key::plain(KeyCode::Esc)],
+        label: "n/Esc",
+        description: "No",
+        action: Action::No,
+        modes: &[Confirm],
         show: Footer,
     },
     // -- Searching ------------------------------------------------------------
@@ -296,11 +394,44 @@ pub static BINDINGS: &[Binding] = &[
         modes: &[List],
         show: Show::Help,
     },
+    // -- Entries and vaults ---------------------------------------------------
+    Binding {
+        keys: &[Key::char('n')],
+        label: "n",
+        description: "New",
+        action: Action::New,
+        modes: &[List, Picker],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::char('e')],
+        label: "e",
+        description: "Edit",
+        action: Action::Edit,
+        modes: &[List, Detail],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::char('r')],
+        label: "r",
+        description: "Rename",
+        action: Action::Rename,
+        modes: &[Picker],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::char('d')],
+        label: "d",
+        description: "Delete",
+        action: Action::Delete,
+        modes: &[List, Detail, Picker],
+        show: Footer,
+    },
     // -- Secrets --------------------------------------------------------------
     Binding {
         keys: &[Key::char(' ')],
         label: "Space",
-        description: "Show/hide secrets",
+        description: "Show/hide",
         action: Action::ToggleReveal,
         modes: &[Detail],
         show: Footer,
@@ -308,12 +439,12 @@ pub static BINDINGS: &[Binding] = &[
     Binding {
         keys: &[Key::ctrl('r')],
         label: "Ctrl-r",
-        description: "Show/hide password",
+        description: "Show/hide",
         action: Action::ToggleRevealInput,
-        modes: &[Unlock],
+        modes: &[Unlock, Edit, Dialog],
         show: Footer,
     },
-    // -- Vaults ---------------------------------------------------------------
+    // -- Locking and switching ------------------------------------------------
     Binding {
         keys: &[Key::char('L')],
         label: "L",
@@ -325,7 +456,7 @@ pub static BINDINGS: &[Binding] = &[
     Binding {
         keys: &[Key::char('V')],
         label: "V",
-        description: "Switch vault",
+        description: "Vaults",
         action: Action::SwitchVault,
         modes: &[List, Detail],
         show: Footer,
@@ -333,36 +464,12 @@ pub static BINDINGS: &[Binding] = &[
     Binding {
         keys: &[Key::plain(KeyCode::Tab)],
         label: "Tab",
-        description: "Other vault",
+        description: "Vaults",
         action: Action::SwitchVault,
         modes: &[Unlock],
         show: Footer,
     },
-    Binding {
-        keys: &[Key::char('r')],
-        label: "r",
-        description: "Refresh",
-        action: Action::Refresh,
-        modes: &[Picker],
-        show: Show::Help,
-    },
-    // -- Help and quitting ----------------------------------------------------
-    Binding {
-        keys: &[Key::char('?')],
-        label: "?",
-        description: "Help",
-        action: Action::Help,
-        modes: &[Picker, List, Detail],
-        show: Footer,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Esc), Key::char('?'), Key::char('q')],
-        label: "Esc",
-        description: "Close help",
-        action: Action::CloseHelp,
-        modes: &[Help],
-        show: Footer,
-    },
+    // -- Quitting and help ----------------------------------------------------
     Binding {
         keys: &[Key::char('q')],
         label: "q",
@@ -388,6 +495,36 @@ pub static BINDINGS: &[Binding] = &[
         modes: &[Unlock],
         show: Footer,
     },
+    Binding {
+        keys: &[Key::char('?'), Key::plain(KeyCode::F(1))],
+        label: "?",
+        description: "Help",
+        action: Action::Help,
+        modes: &[Picker, List, Detail],
+        show: Footer,
+    },
+    // `?` must stay typeable in text fields, so they use F1.
+    Binding {
+        keys: &[Key::plain(KeyCode::F(1))],
+        label: "F1",
+        description: "Help",
+        action: Action::Help,
+        modes: &[Unlock, Search, Edit, Dialog],
+        show: Footer,
+    },
+    Binding {
+        keys: &[
+            Key::plain(KeyCode::Esc),
+            Key::char('?'),
+            Key::char('q'),
+            Key::plain(KeyCode::F(1)),
+        ],
+        label: "Esc",
+        description: "Close help",
+        action: Action::CloseHelp,
+        modes: &[Help],
+        show: Footer,
+    },
     // Ctrl-C always quits, even while typing.
     Binding {
         keys: &[Key::ctrl('c')],
@@ -409,20 +546,17 @@ pub fn action_for(mode: Mode, event: &KeyEvent) -> Option<Action> {
         .map(|b| b.action)
 }
 
-/// `(key label, description)` hints for `mode`: the footer's
-/// (`footer_only`), or everything the help overlay lists.
-pub fn hints(mode: Mode, footer_only: bool) -> impl Iterator<Item = (&'static str, &'static str)> {
-    BINDINGS
-        .iter()
-        .filter(move |b| {
-            b.modes.contains(&mode)
-                && match b.show {
-                    Show::Footer => true,
-                    Show::Help => !footer_only,
-                    Show::Hidden => false,
-                }
-        })
-        .map(|b| (b.label, b.description))
+/// The bindings to hint at in `mode`: the footer's (`footer_only`), or
+/// everything the help overlay lists.
+pub fn hints(mode: Mode, footer_only: bool) -> impl Iterator<Item = &'static Binding> {
+    BINDINGS.iter().filter(move |b| {
+        b.modes.contains(&mode)
+            && match b.show {
+                Show::Footer => true,
+                Show::Help => !footer_only,
+                Show::Hidden => false,
+            }
+    })
 }
 
 #[cfg(test)]

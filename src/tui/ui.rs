@@ -32,10 +32,22 @@ pub fn render(app: &App, frame: &mut Frame<'_>) {
     frame.render_widget(header_line(app), header);
 
     match &app.screen {
-        Screen::Picker(p) => views::picker::render(app, p, frame, body),
-        Screen::Unlock(u) => views::unlock::render(u, frame, body),
-        Screen::Unlocked(u) if u.detail.is_some() => views::detail::render(app, u, frame, body),
-        Screen::Unlocked(u) => views::list::render(app, u, frame, body),
+        Screen::Picker(p) => {
+            views::picker::render(app, p, frame, body);
+            if let Some(dialog) = &p.dialog {
+                views::dialog::render(dialog, app.busy_message(), frame, body);
+            }
+        }
+        Screen::Unlock(u) => views::unlock::render(u, app.busy_message(), frame, body),
+        Screen::Unlocked(u) => match (&u.editor, &u.detail) {
+            (Some(editor), _) => views::edit::render(u, editor, frame, body),
+            (None, Some(_)) => views::detail::render(app, u, frame, body),
+            (None, None) => views::list::render(app, u, frame, body),
+        },
+    }
+
+    if let Some(confirm) = &app.confirm {
+        widgets::confirm::render(&confirm.question, frame, body);
     }
 
     if let Some(s) = &app.status {

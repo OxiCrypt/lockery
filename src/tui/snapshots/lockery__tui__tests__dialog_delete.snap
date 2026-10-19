@@ -1,0 +1,20 @@
+---
+source: src/tui/tests.rs
+expression: "screen(&app, 70, 16)"
+---
+" Lockery · choose a vault                                             "
+"          ╭ Vaults ────────────────────────────────────────╮          "
+"          │  default  primary                              │          "
+"   ╭ Delete “work” ───────────────────────────────────────────────╮   "
+"   │                                                              │   "
+"   │ Permanently deletes the vault and its backup.                │   "
+"   │                                                              │   "
+"   │ › Master password                                            │   "
+"   │   Type its name                                              │   "
+"   │                                                              │   "
+"   │                                                              │   "
+"   │                                                              │   "
+"   ╰──────────────────────────────────────────────────────────────╯   "
+"          ╰────────────────────────────────────────────────╯          "
+"                                                                      "
+" Enter Confirm  Tab Next field  Shift-Tab Previous  F1 Help           "

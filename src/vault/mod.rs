@@ -6,10 +6,12 @@
 //! * [`format`]: the encrypted file format (header, AEAD, padding).
 //! * [`model`] and [`migrate`]: the decrypted entries and their versioned
 //!   serialisation.
+//! * [`manage`]: renaming and deleting whole vaults.
 //! * [`session`]: an unlocked [`Vault`] tying the layers together, with
 //!   save-on-every-change editing.
 
 pub mod format;
+pub mod manage;
 pub mod migrate;
 pub mod model;
 pub mod session;

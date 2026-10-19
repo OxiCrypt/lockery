@@ -19,4 +19,4 @@ expression: masked
 "│                                                          │"
 "╰──────────────────────────────────────────────────────────╯"
 "                                                            "
-" Esc Back  Space Show/hide secrets  L Lock  V Switch vault  "
+" Esc Back  e Edit  d Delete  Space Show/hide  L Lock  ? Help"

@@ -12,7 +12,7 @@ use crate::tui::theme;
 /// Width of the visible part of the password field.
 const FIELD_WIDTH: usize = 36;
 
-pub fn render(u: &UnlockState, frame: &mut Frame<'_>, area: Rect) {
+pub fn render(u: &UnlockState, busy: Option<&str>, frame: &mut Frame<'_>, area: Rect) {
     // 6 content rows + 1 blank row above and below + 2 border rows.
     let area = area.centered(Constraint::Max(50), Constraint::Length(10));
     let block = panel("Unlock");
@@ -44,8 +44,8 @@ pub fn render(u: &UnlockState, frame: &mut Frame<'_>, area: Rect) {
     let cursor_x = field.x + u16::try_from(visible.chars().count()).unwrap_or(0);
     frame.render_widget(Paragraph::new(Span::styled(visible, theme::SECRET)), field);
 
-    let note = if u.busy {
-        Some(Line::styled("Unlocking…", theme::INFO))
+    let note = if let Some(busy) = busy {
+        Some(Line::styled(busy.to_owned(), theme::INFO))
     } else {
         u.error
             .as_deref()
@@ -54,7 +54,7 @@ pub fn render(u: &UnlockState, frame: &mut Frame<'_>, area: Rect) {
     if let Some(note) = note {
         frame.render_widget(note, message);
     }
-    if !u.busy {
+    if busy.is_none() {
         frame.set_cursor_position(Position::new(cursor_x, field.y));
     }
 }

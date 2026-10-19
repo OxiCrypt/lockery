@@ -1,5 +1,5 @@
-//! The `?` overlay: every key for the current screen, including the ones the
-//! footer had no room for.
+//! The help overlay (`?` or F1): every key for the current screen,
+//! including the ones the footer had no room for.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
@@ -14,16 +14,16 @@ pub fn render(mode: Mode, frame: &mut Frame<'_>, area: Rect) {
     let hints: Vec<_> = keymap::hints(mode, false).collect();
     let key_width = hints
         .iter()
-        .map(|(k, _)| k.chars().count())
+        .map(|b| b.label.chars().count())
         .max()
         .unwrap_or(0);
 
     let lines: Vec<Line<'_>> = hints
         .iter()
-        .map(|(key, description)| {
+        .map(|b| {
             Line::from(vec![
-                Span::styled(format!(" {key:<key_width$}  "), theme::KEY),
-                Span::raw(*description),
+                Span::styled(format!(" {:<key_width$}  ", b.label), theme::KEY),
+                Span::raw(b.description),
             ])
         })
         .collect();

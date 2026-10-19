@@ -111,8 +111,8 @@ fn type_text(app: &mut App, text: &str) {
 fn unlock(app: &mut App, password: &str) {
     type_text(app, password);
     press(app, KeyCode::Enter);
-    assert!(app.unlock_pending());
-    app.perform_unlock();
+    assert!(app.has_pending());
+    app.run_pending();
 }
 
 fn unlocked_app(dir: &Path) -> App {
@@ -150,7 +150,7 @@ fn empty_password_is_not_submitted() {
     let dir = setup();
     let mut app = app_for(dir.path(), Some("default"));
     press(&mut app, KeyCode::Enter);
-    assert!(!app.unlock_pending());
+    assert!(!app.has_pending());
     assert!(screen(&app, 60, 16).contains("Type the master password first."));
 }
 
@@ -292,7 +292,7 @@ fn tab_on_unlock_opens_picker_with_current_vault_selected() {
 fn picker_without_vaults_explains_what_to_do() {
     let dir = TempDir::new().unwrap();
     let mut app = app_for(dir.path(), None);
-    assert!(screen(&app, 70, 14).contains("lockery init"));
+    assert!(screen(&app, 70, 14).contains("Press n to create one."));
     press(&mut app, KeyCode::Enter); // nothing to open: no panic, no change
     assert_eq!(app.mode(), Mode::Picker);
 }
@@ -330,4 +330,329 @@ fn snapshot_narrow_terminal() {
     let dir = setup();
     let app = unlocked_app(dir.path());
     insta::assert_snapshot!("list_narrow", screen(&app, 40, 10));
+}
+
+// -- M4: editing entries ------------------------------------------------------
+
+fn shift_tab(app: &mut App) {
+    app.on_key(
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+        Instant::now(),
+    );
+}
+
+/// Reopen the `default` vault from disk (the app must have locked it).
+fn reopen(dir: &Path) -> Vault {
+    Vault::unlock(dir.join("default.lockery"), PASSWORD.as_bytes()).unwrap()
+}
+
+fn find<'a>(vault: &'a Vault, title: &str) -> &'a Entry {
+    vault
+        .entries()
+        .iter()
+        .find(|e| e.title == title)
+        .unwrap_or_else(|| panic!("no {title}"))
+}
+
+#[test]
+fn add_entry_is_saved_to_disk() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Char('n'));
+    assert_eq!(app.mode(), Mode::Edit);
+    insta::assert_snapshot!("edit_new", screen(&app, 70, 22));
+
+    type_text(&mut app, "Email"); // focus starts on Title
+    press(&mut app, KeyCode::Tab);
+    type_text(&mut app, "me@example.com");
+    press(&mut app, KeyCode::Enter); // Enter in a single-line field moves on too
+    type_text(&mut app, "pa55word");
+    ctrl(&mut app, 's');
+
+    assert_eq!(app.mode(), Mode::Detail, "the saved entry is shown");
+    assert!(screen(&app, 70, 22).contains("Saved “Email”."));
+    press(&mut app, KeyCode::Char('L'));
+
+    let vault = reopen(dir.path());
+    let e = find(&vault, "Email");
+    assert_eq!(
+        (e.username.as_str(), e.password.as_str()),
+        ("me@example.com", "pa55word")
+    );
+    assert_eq!(vault.entries().len(), 4);
+}
+
+#[test]
+fn edit_entry_changes_only_what_was_typed() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Down); // Bank
+    press(&mut app, KeyCode::Char('e'));
+    let masked = screen(&app, 70, 22);
+    assert!(
+        !masked.contains("s3cr3t") && !masked.contains("4321"),
+        "{masked}"
+    );
+    insta::assert_snapshot!("edit_existing", masked);
+
+    type_text(&mut app, " Ltd"); // cursor starts at the end of the title
+    ctrl(&mut app, 's');
+    press(&mut app, KeyCode::Char('L'));
+
+    let vault = reopen(dir.path());
+    let e = find(&vault, "Bank Ltd");
+    assert_eq!(e.password, "s3cr3t");
+    assert_eq!(e.notes, "Branch: Main St\nCall before travelling");
+    assert_eq!(e.custom_fields[0].value, "4321");
+    assert!(e.modified > e.created, "modified time was bumped");
+}
+
+#[test]
+fn edit_from_detail_view_and_reveal_in_form() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Enter); // detail of Bank
+    press(&mut app, KeyCode::Char('e'));
+    assert_eq!(app.mode(), Mode::Edit);
+    ctrl(&mut app, 'r');
+    assert!(screen(&app, 70, 22).contains("s3cr3t"));
+}
+
+#[test]
+fn title_is_required() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Char('n'));
+    ctrl(&mut app, 's');
+    assert_eq!(app.mode(), Mode::Edit);
+    assert!(screen(&app, 70, 22).contains("A title is required."));
+}
+
+#[test]
+fn cancelling_asks_only_when_something_changed() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+
+    press(&mut app, KeyCode::Char('n'));
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(
+        app.mode(),
+        Mode::List,
+        "nothing typed: closes straight away"
+    );
+
+    press(&mut app, KeyCode::Char('n'));
+    type_text(&mut app, "x");
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.mode(), Mode::Confirm);
+    press(&mut app, KeyCode::Char('n'));
+    assert_eq!(app.mode(), Mode::Edit, "answering no keeps the form");
+    press(&mut app, KeyCode::Esc);
+    press(&mut app, KeyCode::Char('y'));
+    assert_eq!(app.mode(), Mode::List);
+}
+
+#[test]
+fn delete_needs_confirmation() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Down); // Bank
+    press(&mut app, KeyCode::Char('d'));
+    assert_eq!(app.mode(), Mode::Confirm);
+    insta::assert_snapshot!("confirm_delete", screen(&app, 70, 14));
+
+    press(&mut app, KeyCode::Esc);
+    assert!(screen(&app, 70, 14).contains("Bank"), "Esc means no");
+
+    press(&mut app, KeyCode::Char('d'));
+    press(&mut app, KeyCode::Char('y'));
+    let shown = screen(&app, 70, 14);
+    assert!(
+        shown.contains("Deleted “Bank”.") && shown.contains("2 entries"),
+        "{shown}"
+    );
+    press(&mut app, KeyCode::Char('L'));
+    assert_eq!(reopen(dir.path()).entries().len(), 2);
+}
+
+#[test]
+fn custom_fields_can_be_added_and_hidden() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Char('n'));
+    type_text(&mut app, "Router");
+    // Title → Username, Password, URLs, TOTP, Tags, Favourite, "+ Add".
+    for _ in 0..7 {
+        press(&mut app, KeyCode::Tab);
+    }
+    press(&mut app, KeyCode::Enter); // press the button
+    type_text(&mut app, "Admin PIN");
+    press(&mut app, KeyCode::Tab);
+    type_text(&mut app, "9999");
+    press(&mut app, KeyCode::Tab);
+    press(&mut app, KeyCode::Char(' ')); // Hidden: yes
+    ctrl(&mut app, 's');
+    press(&mut app, KeyCode::Char('L'));
+
+    let vault = reopen(dir.path());
+    let field = &find(&vault, "Router").custom_fields[0];
+    assert_eq!(
+        (field.name.as_str(), field.value.as_str(), field.hidden),
+        ("Admin PIN", "9999", true)
+    );
+}
+
+#[test]
+fn secure_notes_hide_login_fields() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Char('n'));
+    shift_tab(&mut app); // Title → Type
+    press(&mut app, KeyCode::Char(' ')); // Login → Secure note
+    let shown = screen(&app, 70, 22);
+    assert!(
+        shown.contains("Secure note") && !shown.contains("Username"),
+        "{shown}"
+    );
+
+    press(&mut app, KeyCode::Tab);
+    type_text(&mut app, "Recovery codes");
+    ctrl(&mut app, 's');
+    press(&mut app, KeyCode::Char('L'));
+    let vault = reopen(dir.path());
+    assert_eq!(find(&vault, "Recovery codes").kind, EntryKind::Note);
+}
+
+// -- M4: managing vaults from the picker --------------------------------------
+
+/// The picker over `setup()`'s vaults, with fast Argon2 for new vaults.
+fn picker_app(dir: &Path) -> App {
+    let mut app = app_for(dir, None);
+    app.set_new_vault_kdf(super::app::NewVaultKdf::Fixed(test_params()));
+    assert_eq!(app.mode(), Mode::Picker);
+    app
+}
+
+const STRONG: &str = "correct-horse-battery-staple-94!";
+
+#[test]
+fn create_vault_opens_it() {
+    let dir = setup();
+    let mut app = picker_app(dir.path());
+    press(&mut app, KeyCode::Char('n'));
+    assert_eq!(app.mode(), Mode::Dialog);
+    insta::assert_snapshot!("dialog_create", screen(&app, 70, 16));
+
+    type_text(&mut app, "personal");
+    press(&mut app, KeyCode::Tab);
+    type_text(&mut app, STRONG);
+    press(&mut app, KeyCode::Tab);
+    type_text(&mut app, STRONG);
+    press(&mut app, KeyCode::Enter);
+    assert!(app.has_pending());
+    assert!(screen(&app, 70, 16).contains("Creating vault"));
+    app.run_pending();
+
+    assert!(app.is_unlocked());
+    assert!(screen(&app, 70, 16).contains("personal · 0 entries"));
+    press(&mut app, KeyCode::Char('L'));
+    drop(Vault::unlock(dir.path().join("personal.lockery"), STRONG.as_bytes()).unwrap());
+}
+
+#[test]
+fn create_vault_validates_input() {
+    let dir = setup();
+    let mut app = picker_app(dir.path());
+    press(&mut app, KeyCode::Char('n'));
+    let submit = |app: &mut App| {
+        press(app, KeyCode::Enter);
+        assert!(!app.has_pending());
+        screen(app, 70, 16)
+    };
+
+    type_text(&mut app, "work");
+    assert!(submit(&mut app).contains("already exists"));
+    for _ in 0..4 {
+        press(&mut app, KeyCode::Backspace);
+    }
+    type_text(&mut app, "new/../x");
+    assert!(submit(&mut app).contains("invalid vault name"));
+    for _ in 0..8 {
+        press(&mut app, KeyCode::Backspace);
+    }
+    type_text(&mut app, "fresh");
+    press(&mut app, KeyCode::Tab);
+    type_text(&mut app, "password");
+    press(&mut app, KeyCode::Tab);
+    type_text(&mut app, "passw0rd");
+    assert!(submit(&mut app).contains("don't match"));
+
+    for _ in 0.."0rd".len() {
+        press(&mut app, KeyCode::Backspace);
+    }
+    type_text(&mut app, "ord"); // now both say "password"
+    assert!(submit(&mut app).contains("easy to guess"));
+    press(&mut app, KeyCode::Enter); // use it anyway
+    assert!(app.has_pending());
+}
+
+#[test]
+fn rename_vault() {
+    let dir = setup();
+    let mut app = picker_app(dir.path());
+    press(&mut app, KeyCode::Down); // work
+    press(&mut app, KeyCode::Char('r'));
+    for _ in 0.."work".len() {
+        press(&mut app, KeyCode::Backspace);
+    }
+    type_text(&mut app, "jobs");
+    press(&mut app, KeyCode::Enter);
+
+    assert_eq!(app.mode(), Mode::Picker);
+    let shown = screen(&app, 70, 16);
+    assert!(
+        shown.contains("› jobs") && !shown.contains("│  work"),
+        "{shown}"
+    );
+    assert!(shown.contains("Renamed 'work' to 'jobs'."), "{shown}");
+    assert!(dir.path().join("jobs.lockery").is_file());
+    assert!(!dir.path().join("work.lockery").exists());
+}
+
+#[test]
+fn delete_vault_needs_name_and_password() {
+    let dir = setup();
+    let mut app = picker_app(dir.path());
+    press(&mut app, KeyCode::Down); // work
+    press(&mut app, KeyCode::Char('d'));
+    insta::assert_snapshot!("dialog_delete", screen(&app, 70, 16));
+
+    type_text(&mut app, "wrong");
+    press(&mut app, KeyCode::Tab);
+    type_text(&mut app, "wrok");
+    press(&mut app, KeyCode::Enter);
+    assert!(!app.has_pending());
+    assert!(screen(&app, 70, 16).contains("Type 'work' exactly"));
+
+    for _ in 0.."rok".len() {
+        press(&mut app, KeyCode::Backspace);
+    }
+    type_text(&mut app, "ork"); // "wrok" → "work"
+    press(&mut app, KeyCode::Enter);
+    assert!(app.has_pending());
+    app.run_pending();
+    assert!(screen(&app, 70, 16).contains("Wrong password."));
+    assert!(dir.path().join("work.lockery").exists());
+
+    shift_tab(&mut app);
+    for _ in 0.."wrong".len() {
+        press(&mut app, KeyCode::Backspace);
+    }
+    type_text(&mut app, PASSWORD);
+    press(&mut app, KeyCode::Enter);
+    app.run_pending();
+    assert_eq!(app.mode(), Mode::Picker);
+    assert!(screen(&app, 70, 16).contains("Deleted vault 'work'."));
+    assert!(!dir.path().join("work.lockery").exists());
 }
