@@ -39,6 +39,7 @@ use super::generator::{GeneratorState, GeneratorTarget};
 use super::keymap::{self, Action, Mode};
 use super::search::Search;
 use super::settings::SettingsState;
+use super::transfer::{self, ImportPreview};
 use crate::config::{Config, GeneratorConfig};
 use crate::crypto::calibrate::{self, DEFAULT_TARGET};
 use crate::crypto::{self, CipherId, KdfParams};
@@ -97,6 +98,8 @@ enum Pending {
     Calibrate,
     /// Apply the settings screen: re-encrypt the vault.
     Rekey,
+    /// Check the password, then write the CSV export.
+    Export,
 }
 
 /// A yes/no question over the current screen.
@@ -160,6 +163,10 @@ pub(super) enum DialogKind {
     Create,
     Rename(VaultName),
     Delete(VaultName),
+    /// Over an unlocked vault: read a CSV file.
+    Import,
+    /// Over an unlocked vault: write a CSV file (suggested path).
+    Export(String),
 }
 
 /// Cipher options in the "new vault" dialog, matching [`CipherId::ALL`].
@@ -192,6 +199,10 @@ pub(super) struct UnlockedState {
     pub generator: Option<GeneratorState>,
     /// The vault settings screen.
     pub settings: Option<SettingsState>,
+    /// A small form over the vault: CSV import or export.
+    pub dialog: Option<VaultDialog>,
+    /// Reviewing a CSV file before importing it.
+    pub preview: Option<ImportPreview>,
 }
 
 pub(super) struct DetailState {
@@ -221,6 +232,8 @@ impl UnlockedState {
             editor: None,
             generator: None,
             settings: None,
+            dialog: None,
+            preview: None,
         };
         state.refilter();
         state
@@ -356,6 +369,8 @@ impl App {
             Screen::Unlock(_) => Mode::Unlock,
             Screen::Unlocked(u) if u.generator.is_some() => Mode::Generator,
             Screen::Unlocked(u) if u.settings.is_some() => Mode::Settings,
+            Screen::Unlocked(u) if u.dialog.is_some() => Mode::Dialog,
+            Screen::Unlocked(u) if u.preview.is_some() => Mode::Preview,
             Screen::Unlocked(u) if u.editor.is_some() => Mode::Edit,
             Screen::Unlocked(u) if u.detail.is_some() => Mode::Detail,
             Screen::Unlocked(u) if u.searching => Mode::Search,
@@ -445,6 +460,14 @@ impl App {
                 match generator.form.input(key) {
                     FormEvent::Next => generator.form.focus_next(),
                     FormEvent::Changed(id) => generator.on_change(id),
+                    FormEvent::Activated(_) | FormEvent::None => {}
+                }
+            }
+            Screen::Unlocked(u) if u.dialog.is_some() => {
+                let Some(d) = &mut u.dialog else { return };
+                match d.form.input(key) {
+                    FormEvent::Next => d.form.focus_next(),
+                    FormEvent::Changed(_) => d.error = None,
                     FormEvent::Activated(_) | FormEvent::None => {}
                 }
             }
@@ -544,6 +567,8 @@ impl App {
             return;
         };
         let result = match d.kind.clone() {
+            // Only shown over an unlocked vault, never on the picker.
+            DialogKind::Import | DialogKind::Export(_) => return,
             DialogKind::Create => d
                 .validate_create(&self.data_dir)
                 .map(|()| Some(Pending::CreateVault)),
@@ -644,53 +669,25 @@ impl App {
             self.settings_action(action);
             return;
         }
+        if u.dialog.is_some() {
+            self.transfer_dialog_action(action);
+            return;
+        }
+        if u.preview.is_some() {
+            self.preview_action(action);
+            return;
+        }
         if u.editor.is_some() {
             self.editor_action(action);
             return;
         }
 
-        // Commands shared by the list and the detail view.
-        match action {
-            Action::Settings => {
-                u.settings = Some(SettingsState::new(&u.vault));
-                return;
-            }
-            Action::Generate => {
-                u.generator = Some(GeneratorState::new(
-                    &self.gen_settings,
-                    GeneratorTarget::NewEntry,
-                    self.gen_passphrase,
-                ));
-                return;
-            }
-            Action::New => {
-                u.editor = Some(Editor {
-                    form: entry_form::build(None),
-                    id: None,
-                });
-                return;
-            }
-            Action::Edit => {
-                if let Some(entry) = u.current_entry() {
-                    let editor = Editor {
-                        form: entry_form::build(Some(entry)),
-                        id: Some(entry.id),
-                    };
-                    u.editor = Some(editor);
-                }
-                return;
-            }
-            Action::Delete => {
-                if let Some(entry) = u.current_entry() {
-                    self.confirm = Some(Confirm {
-                        question: format!("Delete “{}”? This can't be undone.", entry.title),
-                        on_yes: ConfirmAction::DeleteEntry(entry.id),
-                    });
-                }
-                return;
-            }
-            _ => {}
+        if self.entry_command(action) {
+            return;
         }
+        let Screen::Unlocked(u) = &mut self.screen else {
+            return;
+        };
 
         if let Some(detail) = &mut u.detail {
             match action {
@@ -748,6 +745,145 @@ impl App {
                 self.gen_settings = generator.settings();
                 self.gen_passphrase = generator.form.choice(RowId::GenKind) == 1;
                 u.generator = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Commands shared by the list and the detail view. Returns whether
+    /// `action` was one of them.
+    fn entry_command(&mut self, action: Action) -> bool {
+        let Screen::Unlocked(u) = &mut self.screen else {
+            return false;
+        };
+        match action {
+            Action::Import => {
+                u.dialog = Some(VaultDialog::new(DialogKind::Import));
+            }
+            Action::Export => {
+                let path = transfer::default_export_path(u.vault.path());
+                u.dialog = Some(VaultDialog::new(DialogKind::Export(path)));
+            }
+            Action::Settings => {
+                u.settings = Some(SettingsState::new(&u.vault));
+            }
+            Action::Generate => {
+                u.generator = Some(GeneratorState::new(
+                    &self.gen_settings,
+                    GeneratorTarget::NewEntry,
+                    self.gen_passphrase,
+                ));
+            }
+            Action::New => {
+                u.editor = Some(Editor {
+                    form: entry_form::build(None),
+                    id: None,
+                });
+            }
+            Action::Edit => {
+                if let Some(entry) = u.current_entry() {
+                    let editor = Editor {
+                        form: entry_form::build(Some(entry)),
+                        id: Some(entry.id),
+                    };
+                    u.editor = Some(editor);
+                }
+            }
+            Action::Delete => {
+                if let Some(entry) = u.current_entry() {
+                    self.confirm = Some(Confirm {
+                        question: format!("Delete “{}”? This can't be undone.", entry.title),
+                        on_yes: ConfirmAction::DeleteEntry(entry.id),
+                    });
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Keys in the CSV import/export dialogs.
+    fn transfer_dialog_action(&mut self, action: Action) {
+        let Screen::Unlocked(u) = &mut self.screen else {
+            return;
+        };
+        let Some(dialog) = &mut u.dialog else { return };
+        match action {
+            Action::NextField => dialog.form.focus_next(),
+            Action::PrevField => dialog.form.focus_prev(),
+            Action::ToggleRevealInput => dialog.form.toggle_reveal(),
+            Action::Cancel => u.dialog = None,
+            Action::Submit => {
+                let path_text = dialog.form.text(RowId::FilePath);
+                if path_text.trim().is_empty() {
+                    dialog.error = Some("Enter a file path.".into());
+                    return;
+                }
+                let path = transfer::expand_path(&path_text);
+                match dialog.kind {
+                    DialogKind::Import => match ImportPreview::load(&path, u.vault.entries()) {
+                        Ok(preview) => {
+                            u.dialog = None;
+                            u.preview = Some(preview);
+                        }
+                        Err(message) => dialog.error = Some(message),
+                    },
+                    DialogKind::Export(_) => {
+                        if path.exists() {
+                            dialog.error = Some(format!(
+                                "{} already exists; choose another name.",
+                                transfer::display_path(&path)
+                            ));
+                        } else if dialog.form.text(RowId::MasterPassword).is_empty() {
+                            dialog.form.focus_row(RowId::MasterPassword);
+                            dialog.error = Some("Enter the master password to export.".into());
+                        } else {
+                            self.pending = Some(Pending::Export);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Keys on the import preview.
+    fn preview_action(&mut self, action: Action) {
+        let Screen::Unlocked(u) = &mut self.screen else {
+            return;
+        };
+        let Some(preview) = &mut u.preview else {
+            return;
+        };
+        let last = preview.entries.len().saturating_sub(1);
+        match action {
+            Action::Up => preview.scroll = preview.scroll.saturating_sub(1),
+            Action::Down => preview.scroll = (preview.scroll + 1).min(last),
+            Action::ToggleDuplicates => preview.include_duplicates = !preview.include_duplicates,
+            Action::Cancel => u.preview = None,
+            Action::Submit => {
+                let Some(preview) = u.preview.take() else {
+                    return;
+                };
+                let source = transfer::display_path(&preview.source);
+                let entries = preview.into_entries();
+                if entries.is_empty() {
+                    self.set_status(StatusKind::Info, "Nothing new to import.");
+                    return;
+                }
+                match u.vault.add_many(entries) {
+                    Ok(count) => {
+                        u.refilter();
+                        self.set_status(
+                            StatusKind::Warning,
+                            format!(
+                                "Imported {count} entries. Delete {source}: it holds your passwords in plain text."
+                            ),
+                        );
+                    }
+                    Err(e) => self.set_status(StatusKind::Error, format!("Not imported: {e}")),
+                }
             }
             _ => {}
         }
@@ -926,6 +1062,7 @@ impl App {
             Pending::DeleteVault => "Checking password…",
             Pending::Calibrate => "Measuring this machine…",
             Pending::Rekey => "Re-encrypting the vault…",
+            Pending::Export => "Checking password and exporting…",
         })
     }
 
@@ -937,6 +1074,7 @@ impl App {
             Some(Pending::DeleteVault) => self.finish_delete_vault(),
             Some(Pending::Calibrate) => self.finish_calibrate(),
             Some(Pending::Rekey) => self.finish_rekey(),
+            Some(Pending::Export) => self.finish_export(),
             None => {}
         }
     }
@@ -1021,6 +1159,41 @@ impl App {
                 self.set_status(StatusKind::Info, format!("Deleted vault '{name}'."));
             }
             Err(e) => self.dialog_error(describe_error(&e)),
+        }
+    }
+
+    fn finish_export(&mut self) {
+        let Screen::Unlocked(u) = &mut self.screen else {
+            return;
+        };
+        let Some(dialog) = &mut u.dialog else { return };
+        let password = Zeroizing::new(dialog.form.text(RowId::MasterPassword));
+        let path = transfer::expand_path(&dialog.form.text(RowId::FilePath));
+
+        if let Err(e) = u.vault.verify_password(password.as_bytes()) {
+            dialog.form.set_text(RowId::MasterPassword, "");
+            dialog.error = Some(describe_error(&e));
+            return;
+        }
+        let written = crate::csv_io::export_bitwarden(u.vault.entries()).and_then(|exported| {
+            crate::csv_io::write_new_private_file(&path, &exported.csv)?;
+            Ok(exported.warnings)
+        });
+        match written {
+            Ok(warnings) => {
+                u.dialog = None;
+                let mut message = format!(
+                    "Exported {} entries to {} in Bitwarden format. It's plain text: delete it once you've used it.",
+                    u.vault.entries().len(),
+                    transfer::display_path(&path)
+                );
+                for warning in warnings {
+                    message.push(' ');
+                    message.push_str(&warning);
+                }
+                self.set_status(StatusKind::Warning, message);
+            }
+            Err(e) => dialog.error = Some(e.to_string()),
         }
     }
 
@@ -1163,6 +1336,14 @@ impl VaultDialog {
             DialogKind::Delete(_) => vec![
                 Row::secret(RowId::MasterPassword, "Master password", ""),
                 Row::text(RowId::ConfirmName, "Type its name", ""),
+            ],
+            DialogKind::Import => vec![
+                Row::text(RowId::FilePath, "CSV file", "")
+                    .with_placeholder("e.g. ~/Downloads/bitwarden_export.csv"),
+            ],
+            DialogKind::Export(path) => vec![
+                Row::text(RowId::FilePath, "Save to", path),
+                Row::secret(RowId::MasterPassword, "Master password", ""),
             ],
         };
         Self {

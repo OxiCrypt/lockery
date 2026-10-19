@@ -47,6 +47,8 @@ pub enum RowId {
     Cipher,
     MasterPassword,
     ConfirmName,
+    // CSV import and export
+    FilePath,
     // Vault settings
     MemoryMib,
     Iterations,

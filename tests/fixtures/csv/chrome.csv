@@ -1,0 +1,4 @@
+name,url,username,password,note
+github.com,https://github.com/login,octocat,gh-pass,
+accounts.google.com,https://accounts.google.com/,me@gmail.com,g00gle,personal account
+,https://www.example.org/,ex,ex-pass,

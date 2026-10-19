@@ -7,7 +7,7 @@ mod cli;
 mod prompt;
 
 use std::io::{self, IsTerminal};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, bail};
@@ -15,10 +15,12 @@ use clap::Parser;
 use lockery::config::Config;
 use lockery::crypto::calibrate::{self, DEFAULT_TARGET};
 use lockery::crypto::{self, CipherId, KdfParams};
+use lockery::csv_io;
 use lockery::paths::{self, VaultName};
 use lockery::tui::{self, App, StatusKind, VaultTarget};
 use lockery::vault::Vault;
 use lockery::vault::format::CURRENT_FORMAT_VERSION;
+use zeroize::Zeroizing;
 
 use crate::cli::{Cli, Command, InitArgs};
 
@@ -29,9 +31,7 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Command::Init(args)) => init(&config, &args),
         Some(Command::List) => list(&config),
-        Some(Command::Import { .. }) => {
-            bail!("`lockery import` is not implemented yet (milestone M7)")
-        }
+        Some(Command::Import { csv, vault }) => import(&config, &csv, vault.as_deref()),
         None => open(&config, cli.name.as_deref(), cli.path),
     }
 }
@@ -184,6 +184,59 @@ fn open(config: &Config, name: Option<&str>, path: Option<PathBuf>) -> anyhow::R
     if vault.opened_format_version() < CURRENT_FORMAT_VERSION {
         println!("  This vault uses an older file format and will be upgraded on the next save.");
     }
+    Ok(())
+}
+
+/// `lockery import <csv> [--vault NAME]`: add entries from another manager's
+/// CSV export. Entries already in the vault are skipped.
+fn import(config: &Config, csv: &Path, vault: Option<&str>) -> anyhow::Result<()> {
+    let bytes = Zeroizing::new(
+        std::fs::read(csv).with_context(|| format!("can't read {}", csv.display()))?,
+    );
+    let imported = csv_io::parse(&bytes)?;
+    drop(bytes);
+
+    let name = vault_name(config, vault)?;
+    let path = name.path_in(&paths::data_dir()?);
+    if !path.exists() {
+        bail!("vault '{name}' doesn't exist yet; create it with `lockery init`");
+    }
+    let password = prompt::password(&format!("Master password for '{name}': "))?;
+    let mut vault = Vault::unlock(&path, password.as_bytes())?;
+    drop(password);
+
+    println!(
+        "Read {} entries from a {} export.",
+        imported.entries.len(),
+        imported.format.name()
+    );
+    for warning in &imported.warnings {
+        println!("  ! {warning}");
+    }
+    let flags = csv_io::duplicate_flags(vault.entries(), &imported.entries);
+    let duplicates = flags.iter().filter(|&&d| d).count();
+    if duplicates > 0 {
+        println!("{duplicates} are already in '{name}' and will be skipped.");
+    }
+    let new: Vec<_> = imported
+        .entries
+        .into_iter()
+        .zip(flags)
+        .filter_map(|(entry, duplicate)| (!duplicate).then_some(entry))
+        .collect();
+    if new.is_empty() {
+        println!("Nothing new to import.");
+        return Ok(());
+    }
+    if !prompt::confirm(&format!("Import {} entries into '{name}'?", new.len()))? {
+        bail!("cancelled; nothing was imported");
+    }
+    let count = vault.add_many(new)?;
+    println!("Imported {count} entries into '{name}'.");
+    println!(
+        "{} holds your passwords in plain text. Delete it once you no longer need it.",
+        csv.display()
+    );
     Ok(())
 }
 

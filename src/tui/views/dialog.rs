@@ -17,7 +17,24 @@ pub fn render(dialog: &VaultDialog, busy: Option<&str>, frame: &mut Frame<'_>, a
         DialogKind::Rename(name) => (format!("Rename “{name}”"), None),
         DialogKind::Delete(name) => (
             format!("Delete “{name}”"),
-            Some("Permanently deletes the vault and its backup."),
+            Some((
+                "Permanently deletes the vault and its backup.",
+                theme::WARNING,
+            )),
+        ),
+        DialogKind::Import => (
+            "Import from CSV".to_owned(),
+            Some((
+                "A Bitwarden, KeePassXC, Chrome or Firefox export.",
+                theme::DIM,
+            )),
+        ),
+        DialogKind::Export(_) => (
+            "Export to CSV (Bitwarden format)".to_owned(),
+            Some((
+                "The file will hold every password in plain text.",
+                theme::WARNING,
+            )),
         ),
     };
     let field_rows = u16::try_from(dialog.form.rows().len()).unwrap_or(u16::MAX);
@@ -39,8 +56,8 @@ pub fn render(dialog: &VaultDialog, busy: Option<&str>, frame: &mut Frame<'_>, a
     ])
     .areas(inner);
 
-    if let Some(note) = note {
-        frame.render_widget(Line::styled(note, theme::WARNING), note_area);
+    if let Some((note, style)) = note {
+        frame.render_widget(Line::styled(note, style), note_area);
     }
     form::render(&dialog.form, frame, fields, LABEL_WIDTH);
 

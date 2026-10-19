@@ -1,0 +1,7 @@
+folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp
+Social,1,login,Twitter,,,0,https://twitter.com,me@example.com,tw1tter-pass,
+,,note,Recovery codes,"1111-2222
+3333-4444",,0,,,,
+Work,,login,GitLab,Self-hosted too,"PIN: 1234
+Employee ID: 42",0,"https://gitlab.com,https://gitlab.example.com",alice,"s3c,ret""pw",otpauth://totp/GitLab:alice?secret=JBSWY3DPEHPK3PXP
+,,card,Visa,,,0,,,,

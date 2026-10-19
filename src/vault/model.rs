@@ -20,7 +20,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// What an entry represents. Serialised by name, so new kinds can be added
 /// without renumbering. `Passkey` will join this list in M10.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntryKind {
     /// A website or app login: username, password, URLs.

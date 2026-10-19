@@ -16,6 +16,7 @@ pub mod keymap;
 pub mod search;
 mod settings;
 mod theme;
+mod transfer;
 mod ui;
 mod views;
 mod widgets;

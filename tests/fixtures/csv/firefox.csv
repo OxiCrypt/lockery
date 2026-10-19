@@ -1,0 +1,3 @@
+"url","username","password","httpRealm","formActionOrigin","guid","timeCreated","timeLastUsed","timePasswordChanged"
+"https://www.mozilla.org","fox","f0x-pass","","https://www.mozilla.org","{e1a1d7b2-0000-4000-8000-000000000001}","1700000000000","1700000500000","1700000400000"
+"https://intranet.example:8443","staff","s7aff","Intranet","","{e1a1d7b2-0000-4000-8000-000000000002}","1690000000000","1690000000000","1690000000000"

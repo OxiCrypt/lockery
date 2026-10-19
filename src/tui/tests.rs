@@ -884,3 +884,142 @@ fn settings_need_a_change_and_ask_before_discarding() {
     press(&mut app, KeyCode::Char('y'));
     assert_eq!(app.mode(), Mode::List);
 }
+
+// -- M7: CSV import and export -------------------------------------------------
+
+fn fixture_csv(name: &str) -> String {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/csv")
+        .join(name)
+        .display()
+        .to_string()
+}
+
+/// `i`, type `path`, Enter: lands on the preview (or an error in the dialog).
+fn open_import(app: &mut App, path: &str) {
+    press(app, KeyCode::Char('i'));
+    assert_eq!(app.mode(), Mode::Dialog);
+    type_text(app, path);
+    press(app, KeyCode::Enter);
+}
+
+#[test]
+fn import_csv_through_the_preview() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    open_import(&mut app, &fixture_csv("chrome.csv"));
+    assert_eq!(app.mode(), Mode::Preview);
+    let shown = screen(&app, 90, 24);
+    assert!(
+        shown.contains("Chrome") && shown.contains("3 entries"),
+        "{shown}"
+    );
+    assert!(shown.contains("✓ github.com"), "{shown}");
+
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.mode(), Mode::List);
+    let shown = screen(&app, 250, 24);
+    assert!(
+        shown.contains("Imported 3 entries.") && shown.contains("plain text"),
+        "{shown}"
+    );
+    assert!(shown.contains("6 entries"), "{shown}");
+    press(&mut app, KeyCode::Char('L'));
+    assert_eq!(reopen(dir.path()).entries().len(), 6);
+}
+
+#[test]
+fn reimporting_skips_duplicates_unless_asked() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    let csv = fixture_csv("keepassxc.csv");
+    open_import(&mut app, &csv);
+    press(&mut app, KeyCode::Enter); // 3 new entries
+
+    open_import(&mut app, &csv);
+    let shown = screen(&app, 90, 24);
+    assert!(
+        shown.contains("3 already in this vault") && shown.contains("= Bank"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("1 warning ") && shown.contains("not a date"),
+        "{shown}"
+    );
+    press(&mut app, KeyCode::Enter);
+    assert!(screen(&app, 90, 24).contains("Nothing new to import."));
+
+    open_import(&mut app, &csv);
+    press(&mut app, KeyCode::Char(' ')); // include duplicates
+    assert!(screen(&app, 90, 24).contains("✓ Bank"));
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Char('L'));
+    assert_eq!(reopen(dir.path()).entries().len(), 9);
+}
+
+#[test]
+fn import_reports_bad_files_in_the_dialog() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    open_import(&mut app, "/no/such/file.csv");
+    assert_eq!(app.mode(), Mode::Dialog);
+    assert!(screen(&app, 90, 20).contains("Can't read"));
+
+    let bogus = dir.path().join("bogus.csv");
+    std::fs::write(&bogus, "a,b\n1,2\n").unwrap();
+    press(&mut app, KeyCode::Esc);
+    open_import(&mut app, &bogus.display().to_string());
+    assert!(screen(&app, 160, 20).contains("unrecognised CSV columns"));
+}
+
+#[test]
+fn export_needs_the_password_and_writes_a_private_bitwarden_csv() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(app.mode(), Mode::Dialog);
+    let shown = screen(&app, 90, 20);
+    assert!(
+        shown.contains("plain text") && shown.contains("lockery-default-export.csv"),
+        "{shown}"
+    );
+
+    for _ in 0..60 {
+        press(&mut app, KeyCode::Backspace); // clear the suggested path
+    }
+    let out = dir.path().join("export.csv");
+    type_text(&mut app, &out.display().to_string());
+    press(&mut app, KeyCode::Tab);
+    type_text(&mut app, "wrong");
+    press(&mut app, KeyCode::Enter);
+    app.run_pending();
+    assert!(screen(&app, 90, 20).contains("Wrong password."));
+    assert!(!out.exists());
+
+    type_text(&mut app, PASSWORD); // the field was cleared and kept focus
+    press(&mut app, KeyCode::Enter);
+    app.run_pending();
+    assert_eq!(app.mode(), Mode::List);
+    assert!(screen(&app, 160, 20).contains("Exported 3 entries"));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&out).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    let imported = crate::csv_io::parse(&std::fs::read(&out).unwrap()).unwrap();
+    assert_eq!(imported.format, crate::csv_io::CsvFormat::Bitwarden);
+    assert_eq!(imported.entries.len(), 3);
+
+    // Exporting again to the same file is refused.
+    press(&mut app, KeyCode::Char('x'));
+    for _ in 0..60 {
+        press(&mut app, KeyCode::Backspace);
+    }
+    type_text(&mut app, &out.display().to_string());
+    press(&mut app, KeyCode::Enter);
+    assert!(screen(&app, 120, 20).contains("already exists"));
+}

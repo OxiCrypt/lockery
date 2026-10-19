@@ -169,3 +169,53 @@ fn out_of_range_kdf_is_rejected() {
     assert!(err.contains("invalid Argon2 parameters"), "{err}");
     assert!(!Path::new(&data.path().join("default.lockery")).exists());
 }
+
+#[test]
+fn import_csv_skips_duplicates_the_second_time() {
+    let data = TempDir::new().unwrap();
+    init(&data, None);
+    let csv = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/csv/chrome.csv");
+
+    let mut first = lockery(&data);
+    first
+        .arg("import")
+        .arg(&csv)
+        .write_stdin(format!("{PASSWORD}\ny\n"));
+    let out = stdout(&mut first);
+    assert!(
+        out.contains("Read 3 entries from a Chrome export."),
+        "{out}"
+    );
+    assert!(out.contains("Imported 3 entries into 'default'."), "{out}");
+    assert!(out.contains("plain text"), "{out}");
+
+    let mut again = lockery(&data);
+    again
+        .arg("import")
+        .arg(&csv)
+        .write_stdin(format!("{PASSWORD}\n"));
+    let out = stdout(&mut again);
+    assert!(out.contains("3 are already in 'default'"), "{out}");
+    assert!(out.contains("Nothing new to import."), "{out}");
+
+    let out = stdout(lockery(&data).write_stdin(format!("{PASSWORD}\n")));
+    assert!(out.contains("3 entries"), "{out}");
+}
+
+#[test]
+fn import_can_be_declined_and_rejects_unknown_csv() {
+    let data = TempDir::new().unwrap();
+    init(&data, None);
+    let csv = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/csv/firefox.csv");
+    let mut declined = lockery(&data);
+    declined
+        .arg("import")
+        .arg(&csv)
+        .write_stdin(format!("{PASSWORD}\nn\n"));
+    assert!(stderr_of_failure(&mut declined).contains("nothing was imported"));
+
+    let bogus = data.path().join("bogus.csv");
+    std::fs::write(&bogus, "a,b\n1,2\n").unwrap();
+    let err = stderr_of_failure(lockery(&data).arg("import").arg(&bogus));
+    assert!(err.contains("unrecognised CSV columns"), "{err}");
+}

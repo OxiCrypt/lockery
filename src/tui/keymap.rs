@@ -31,6 +31,8 @@ pub enum Mode {
     Generator,
     /// The vault settings screen.
     Settings,
+    /// Reviewing a CSV file before importing it.
+    Preview,
     /// A yes/no question.
     Confirm,
     /// The help overlay is open.
@@ -53,7 +55,7 @@ impl Mode {
     }
 
     /// Every mode, for tests and the help overlay.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Picker,
         Self::Unlock,
         Self::List,
@@ -63,6 +65,7 @@ impl Mode {
         Self::Dialog,
         Self::Generator,
         Self::Settings,
+        Self::Preview,
         Self::Confirm,
         Self::Help,
     ];
@@ -111,6 +114,12 @@ pub enum Action {
     UseGenerated,
     /// Open the vault settings.
     Settings,
+    /// Import entries from a CSV file.
+    Import,
+    /// Export entries to a CSV file.
+    Export,
+    /// On the import preview: also import entries that look like duplicates.
+    ToggleDuplicates,
     /// Rename the selected vault.
     Rename,
     /// Delete the selected entry or vault (after confirmation).
@@ -197,7 +206,7 @@ pub struct Binding {
 }
 
 use Mode::{
-    Confirm, Detail, Dialog, Edit, Generator, Help, List, Picker, Search, Settings, Unlock,
+    Confirm, Detail, Dialog, Edit, Generator, Help, List, Picker, Preview, Search, Settings, Unlock,
 };
 use Show::{Footer, Hidden};
 
@@ -238,7 +247,7 @@ pub static BINDINGS: &[Binding] = &[
         label: "↑↓",
         description: "Move",
         action: Action::Up,
-        modes: &[Search],
+        modes: &[Search, Preview],
         show: Footer,
     },
     Binding {
@@ -246,7 +255,7 @@ pub static BINDINGS: &[Binding] = &[
         label: "↓",
         description: "Move down",
         action: Action::Down,
-        modes: &[Search],
+        modes: &[Search, Preview],
         show: Hidden,
     },
     Binding {
@@ -308,6 +317,22 @@ pub static BINDINGS: &[Binding] = &[
         description: "Confirm",
         action: Action::Submit,
         modes: &[Dialog],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::plain(KeyCode::Enter)],
+        label: "Enter",
+        description: "Import",
+        action: Action::Submit,
+        modes: &[Preview],
+        show: Footer,
+    },
+    Binding {
+        keys: &[Key::char(' ')],
+        label: "Space",
+        description: "Include duplicates",
+        action: Action::ToggleDuplicates,
+        modes: &[Preview],
         show: Footer,
     },
     Binding {
@@ -400,7 +425,7 @@ pub static BINDINGS: &[Binding] = &[
         label: "Esc",
         description: "Cancel",
         action: Action::Cancel,
-        modes: &[Edit, Dialog, Settings],
+        modes: &[Edit, Dialog, Settings, Preview],
         show: Footer,
     },
     // -- Confirmations --------------------------------------------------------
@@ -499,6 +524,22 @@ pub static BINDINGS: &[Binding] = &[
         show: Show::Help,
     },
     Binding {
+        keys: &[Key::char('i')],
+        label: "i",
+        description: "Import from CSV",
+        action: Action::Import,
+        modes: &[List, Detail],
+        show: Show::Help,
+    },
+    Binding {
+        keys: &[Key::char('x')],
+        label: "x",
+        description: "Export to CSV",
+        action: Action::Export,
+        modes: &[List, Detail],
+        show: Show::Help,
+    },
+    Binding {
         keys: &[Key::char('s')],
         label: "s",
         description: "Vault settings",
@@ -579,7 +620,7 @@ pub static BINDINGS: &[Binding] = &[
         label: "?",
         description: "Help",
         action: Action::Help,
-        modes: &[Picker, List, Detail],
+        modes: &[Picker, List, Detail, Preview],
         show: Footer,
     },
     // `?` must stay typeable in text fields, so they use F1.

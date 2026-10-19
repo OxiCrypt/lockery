@@ -101,6 +101,14 @@ pub enum Error {
     )]
     BackupNotRefreshed(#[source] Box<Error>),
 
+    /// A CSV file that couldn't be imported.
+    #[error("can't import this CSV: {0}")]
+    Import(String),
+
+    /// A CSV export that couldn't be written.
+    #[error("export failed: {0}")]
+    Export(String),
+
     /// Password/passphrase generator options that can't be satisfied.
     #[error("{0}")]
     Generator(String),

@@ -16,7 +16,7 @@ so I'm building one myself, with AI assistance.
 | Backwards compatibility | ✅ Done |
 | Full metadata encryption | ✅ Done |
 | Crash safety | 🟡 Partly done |
-| CSV import (Bitwarden, KeePassXC, Chrome, Firefox) and export (Bitwarden format) | ⏳ Planned |
+| CSV import (Bitwarden, KeePassXC, Chrome, Firefox) and export (Bitwarden format) | ✅ Done |
 | Notes in entries | ✅ Done |
 | Fully keyboard-based navigation, with key hints at the bottom of the screen | ✅ Done |
 | Random password and passphrase generation | ✅ Done |
@@ -36,11 +36,12 @@ How each finished one works:
 - **Named vaults:** keep as many vaults as you like next to your primary one. Each has its own master password and settings. Create, rename, delete and switch between them in the app, or use `lockery init <name>` and `lockery <name>`.
 - **Keyboard navigation:** everything is done from the keyboard. The bar at the bottom shows the keys for the current screen, and `?` (or `F1` while typing) lists all of them. Every key binding lives in one table that also produces the hints, so the hints always match what the keys do.
 - **Generators:** random passwords (length, character kinds, avoiding look-alikes such as 0/O) and passphrases from the EFF wordlist (word count, separator, capitals). `Ctrl-g` in the entry editor fills in the password; `g` in the list starts a new entry with one. Each comes with a strength meter and an entropy estimate, and all randomness comes from the operating system.
-- **Partly done:** the terminal UI covers vaults, entries, the generator and settings; the clipboard and import/export come next.
+- **CSV:** import exports from Bitwarden, KeePassXC, Chrome (and other Chromium browsers) or Firefox with `i` in the app or `lockery import <file>`. You see what was found, which entries are already in the vault and any warnings before anything is added. Export everything in Bitwarden format with `x`; almost every password manager can import it. The file is plaintext, so the export asks for your master password again, is readable only by you, and never overwrites an existing file.
+- **Partly done:** the terminal UI covers everything except the clipboard, which comes next.
 
 ## Status
 
-Early development; not ready for real passwords yet. You can create vaults, generate passwords, and add, edit, search and delete entries in the terminal UI. Copying to the clipboard and CSV import/export are still to come.
+Early development; not ready for real passwords yet. You can create vaults, generate passwords, import and export CSV files, change vault settings, and add, edit, search and delete entries in the terminal UI. Copying to the clipboard is still to come.
 
 See [ROADMAP.md](ROADMAP.md) for the full milestone plan and progress.
 
@@ -61,6 +62,7 @@ lockery list           # show your vaults
 lockery                # open the app on the primary vault
 lockery work           # open the app on a named vault
 lockery --path FILE    # open the app on a vault file anywhere else
+lockery import FILE    # import a CSV export into the primary vault (--vault NAME for another)
 ```
 
 `lockery init` tunes Argon2 so unlocking takes about a second on your machine. Use `--cipher aes256gcm` to pick AES-256-GCM, or `--memory-mib`, `--iterations` and `--parallelism` to set Argon2 yourself.

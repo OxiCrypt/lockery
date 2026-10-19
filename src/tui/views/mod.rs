@@ -7,6 +7,7 @@ pub mod edit;
 pub mod form;
 pub mod generator;
 pub mod help;
+pub mod import_preview;
 pub mod list;
 pub mod picker;
 pub mod settings;

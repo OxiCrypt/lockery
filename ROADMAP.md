@@ -15,7 +15,7 @@ follow in M10.
 | [M4: Editing](#m4-editing) | ✅ Done |
 | [M5: Generators](#m5-generators) | ✅ Done |
 | [M6: Clipboard](#m6-clipboard) | ⏳ Next |
-| [M7: CSV import and export](#m7-csv-import-and-export) | ⏳ |
+| [M7: CSV import and export](#m7-csv-import-and-export) | ✅ Done (ahead of M6) |
 | [M8: Settings](#m8-settings) | ✅ Done (ahead of M6–M7) |
 | [M9: Hardening and alpha 0.1](#m9-hardening-and-alpha-01) | ⏳ |
 | [M10: Passkeys](#m10-passkeys-post-alpha) | ⏳ After alpha |
@@ -143,16 +143,25 @@ follow in M10.
 
 ## M7: CSV import and export
 
-⏳
+✅ Done (built before M6)
 
-- [ ] Import format detected from the CSV's header row (`src/csv/import.rs`)
-- [ ] Importers for Bitwarden, KeePassXC, Chrome and Firefox
-- [ ] Preview screen with duplicates and warnings before anything is added
-- [ ] `lockery import <csv> [--vault NAME]`
-- [ ] Bitwarden-format export (`src/csv/export.rs`)
-  - [ ] plaintext warning and master password asked again
-  - [ ] file written with mode 0600 on unix
-- [ ] Sample CSVs from each source; export → re-import round-trip test
+- [x] Import format recognised from the CSV's header row; columns found by name, not position (`src/csv_io/import.rs`)
+- [x] Importers:
+  - [x] Bitwarden: folder → tag, `fields` → custom fields; cards and identities skipped with a warning
+  - [x] KeePassXC: group path (minus `Root`) → tag, created/modified dates kept
+  - [x] Chrome (and other Chromium browsers): title from `name`, or the URL's host
+  - [x] Firefox: title from the URL's host; HTTP realm, form origin and GUID → custom fields; dates kept
+  - [x] unknown extra columns become custom fields instead of being dropped
+- [x] Duplicates (same type, title, username and password, or the same note) are found against the vault and within the file, and skipped unless you choose otherwise
+- [x] Import preview (`i` from the list or detail view): format, counts, duplicates, warnings, and the list of entries, before anything is added (`src/tui/transfer.rs`, `src/tui/views/import_preview.rs`)
+- [x] `lockery import <csv> [--vault NAME]`, with the same duplicate handling and a confirmation
+- [x] Bitwarden-format export (`x`) (`src/csv_io/export.rs`)
+  - [x] plaintext warning; master password asked again
+  - [x] written with mode 0600 on unix; never overwrites an existing file
+  - [x] anything Bitwarden's CSV can't hold (extra tags, hidden flags, multi-line field values) is reported
+- [x] Every import and export reminds you the CSV is plaintext and should be deleted
+- [x] Hand-written sample CSVs for each source, matching their documented columns (`tests/fixtures/csv/`, `tests/csv_import.rs`), an export → re-import round-trip test, and TUI and CLI tests against the vault on disk
+- [ ] Test against real exports from each manager (the samples follow their documented formats, but aren't real exports)
 
 ## M8: Settings
 

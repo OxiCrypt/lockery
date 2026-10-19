@@ -42,12 +42,17 @@ pub fn render(app: &App, frame: &mut Frame<'_>) {
         Screen::Unlocked(u) => {
             if let Some(settings) = &u.settings {
                 views::settings::render(u, settings, app.busy_message(), frame, body);
+            } else if let Some(preview) = &u.preview {
+                views::import_preview::render(preview, frame, body);
             } else {
                 match (&u.editor, &u.detail) {
                     (Some(editor), _) => views::edit::render(u, editor, frame, body),
                     (None, Some(_)) => views::detail::render(app, u, frame, body),
                     (None, None) => views::list::render(app, u, frame, body),
                 }
+            }
+            if let Some(dialog) = &u.dialog {
+                views::dialog::render(dialog, app.busy_message(), frame, body);
             }
             if let Some(generator) = &u.generator {
                 views::generator::render(generator, frame, body);

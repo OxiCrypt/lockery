@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod crypto;
+pub mod csv_io;
 pub mod error;
 pub mod generator;
 pub mod paths;

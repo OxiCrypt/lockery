@@ -224,6 +224,35 @@ impl Vault {
         Ok(removed)
     }
 
+    /// Add several entries with a single save (e.g. an import). Returns how
+    /// many were added.
+    ///
+    /// # Errors
+    /// Any error from saving; the vault is then unchanged.
+    pub fn add_many(&mut self, entries: Vec<Entry>) -> Result<usize> {
+        let count = entries.len();
+        self.commit(|data| {
+            data.entries.extend(entries);
+            Ok(())
+        })?;
+        Ok(count)
+    }
+
+    /// Check that `password` is this vault's master password, without
+    /// changing anything. Runs Argon2, so it takes as long as unlocking. Used
+    /// to confirm sensitive actions such as exporting or re-keying.
+    ///
+    /// # Errors
+    /// [`Error::Decryption`] if it isn't, or a key-derivation error.
+    pub fn verify_password(&self, password: &[u8]) -> Result<()> {
+        let check = VaultKey::derive(password, *self.key.salt(), self.key.kdf())?;
+        if crypto::keys_equal(check.key(), self.key.key()) {
+            Ok(())
+        } else {
+            Err(Error::Decryption)
+        }
+    }
+
     // -- Settings: re-encrypting the whole vault ------------------------------
 
     /// Re-encrypt the vault with new settings: a new master password
@@ -255,11 +284,7 @@ impl Vault {
         kdf: KdfParams,
         cipher: CipherId,
     ) -> Result<()> {
-        let check = VaultKey::derive(current_password, *self.key.salt(), self.key.kdf())?;
-        if !crypto::keys_equal(check.key(), self.key.key()) {
-            return Err(Error::Decryption);
-        }
-        drop(check);
+        self.verify_password(current_password)?;
 
         let new_key = VaultKey::derive_new(new_password.unwrap_or(current_password), kdf)?;
         self.write_with(&new_key, cipher, &self.data)?;
@@ -507,6 +532,21 @@ mod tests {
         let bak = fs::read(path.with_extension("lockery.bak")).unwrap();
         assert!(matches!(format::open(PW, &bak), Err(Error::Decryption)));
         assert!(format::open(b"new password", &bak).is_ok());
+    }
+
+    #[test]
+    fn add_many_and_verify_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut v = new_vault(dir.path(), CipherId::default());
+        assert_eq!(
+            v.add_many(vec![login("A", "1"), login("B", "2")]).unwrap(),
+            2
+        );
+        assert!(v.verify_password(PW).is_ok());
+        assert!(matches!(v.verify_password(b"nope"), Err(Error::Decryption)));
+        let path = v.path().to_path_buf();
+        drop(v);
+        assert_eq!(Vault::unlock(&path, PW).unwrap().entries().len(), 2);
     }
 
     #[test]
