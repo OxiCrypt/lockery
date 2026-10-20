@@ -39,7 +39,7 @@ How each finished one works:
 - **Generators:** random passwords (length, character kinds, avoiding look-alikes such as 0/O) and passphrases from the EFF wordlist (word count, separator, capitals). `Ctrl-g` in the entry editor fills in the password; `g` in the list starts a new entry with one. Each comes with a strength meter and an entropy estimate, and all randomness comes from the operating system.
 - **CSV:** import exports from Bitwarden, KeePassXC, Chrome (and other Chromium browsers) or Firefox with `i` in the app or `lockery import <file>`. You see what was found, which entries are already in the vault and any warnings before anything is added. Export everything in Bitwarden format with `x`; almost every password manager can import it. The file is plaintext, so the export asks for your master password again, is readable only by you, and never overwrites an existing file.
 - **Clipboard:** `c` copies the password and `u` the username. The clipboard is cleared after 20 seconds (`clipboard_clear_secs` in the config), and whenever the vault locks or Lockery quits, but only if it still holds what Lockery put there, so your own copies are left alone. Copies ask clipboard managers not to keep them in their history.
-- **Hardening:** Lockery can't leave a core dump behind, and on Linux other programs running as you can't attach a debugger to it or read its memory. The vault key and the decrypted vault are kept out of swap and wiped from memory once they're no longer needed. See the threat model below.
+- **Hardening:** Lockery can't leave a core dump behind, and on Linux other programs running as you can't attach a debugger to it or read its memory. The vault key and the decrypted vault are kept out of swap and wiped from memory once they're no longer needed. All memory is wiped as it's freed, so copies the libraries Lockery uses make of your secrets don't linger either. See the threat model below.
 
 ## Security and threat model
 
@@ -56,6 +56,7 @@ Lockery is an alpha. Its design hasn't been reviewed by anyone outside the proje
   - on Linux the process is marked non-dumpable (`PR_SET_DUMPABLE`), so other programs running as you can't `ptrace` it or read `/proc/<pid>/mem`;
   - the vault key and the decrypted vault are on memory pages locked out of swap (`mlock`, on by default, see below);
   - secrets are wiped from memory when they're no longer needed, including the values an edit replaces.
+- **Copies of secrets left behind in freed memory.** Programs routinely free memory without clearing it, so old copies of a password can linger until that memory happens to be reused. Libraries do this all the time: the text editor as you type, cut and undo, the strength checker as it scores a password, the vault decoder as it reads your entries. Lockery replaces the memory allocator with one that wipes every block before it's freed, so these copies are gone the moment they're let go. Strings that grow are moved and the old copy wiped, never left in place. A test (on Linux) searches Lockery's own memory for a planted secret after each of these and finds nothing; without the wiping allocator it finds several copies. The cost is a few milliseconds per unlock.
 - **An unattended unlocked vault.** It locks itself after 5 minutes idle (`idle_lock_secs`), and changing the master password or encryption settings, exporting, or deleting a vault all ask for the current master password again.
 
 **What it doesn't protect against**
@@ -65,13 +66,12 @@ Lockery is an alpha. Its design hasn't been reviewed by anyone outside the proje
 - **What you show on screen.** A revealed password is visible to anyone looking, and may stay in your terminal's scrollback, in `tmux`/`screen` history, or in a screen recording.
 - **Clipboard managers that ignore the "don't keep this" hint**, and programs that read the clipboard during the seconds a password is on it.
 - **Plaintext CSV files.** An export (or a file you import) holds every password in the clear. Delete it as soon as you're done with it.
-- **Every last copy in memory.** Lockery wipes what it controls, but some libraries keep copies it can't reach. They're gone once Lockery exits (the OS clears memory before reusing it), but while it runs, and in swap, they may linger:
-  - the text editor widget's cut buffer, and the old buffers it frees as you type;
-  - the password strength checker (zxcvbn), once per edit;
-  - the clipboard library's copy of whatever you copied;
-  - the CBOR decoder's scratch space while a vault is opened;
-  - Argon2's working memory;
-  - terminal input and output buffers.
+- **Copies that are still in use.** Freed memory is wiped, but a few copies are held on purpose while Lockery runs:
+  - the clipboard library's copy of what you copied, until it's cleared (it needs it to paste);
+  - the text editor's cut buffer and undo history, until the form closes (secret fields keep no undo history);
+  - what's on screen: the terminal library's screen buffers hold a revealed password until the screen is redrawn.
+
+  The vault decoder also uses scratch space on the stack, which no allocator sees. Lockery overwrites that part of the stack after opening a vault, but that is best effort. Outside Lockery, the kernel and your terminal see everything you type and everything shown.
 
   Entry contents (as opposed to the key and the decrypted vault file) are many small allocations, and they are wiped but not locked against swap. Use encrypted swap, or none, if that matters to you.
 
@@ -83,6 +83,7 @@ Lockery is an alpha. Its design hasn't been reviewed by anyone outside the proje
 | No same-user debugger or memory reads | ✅ | ❌ | ❌ |
 | Key and decrypted vault kept out of swap | ✅ | ✅ | ❌ not yet |
 | Secrets wiped from memory | ✅ | ✅ | ✅ |
+| All freed memory wiped, including library copies | ✅ | ✅ | ✅ |
 
 **Memory locking.** The amount of memory a program may lock is limited (`ulimit -l`, usually 8 MiB on Linux, which is plenty). If locking fails, Lockery warns you once and carries on without it. To turn it off:
 

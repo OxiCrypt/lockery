@@ -19,7 +19,7 @@
 
 use std::io;
 
-use crate::hardening::SecretBuf;
+use crate::hardening::{self, SecretBuf};
 use serde::Deserialize;
 
 use super::model::VaultData;
@@ -42,10 +42,14 @@ struct SchemaPeek {
 /// [`Error::Payload`] if the bytes aren't a valid payload.
 pub fn decode(bytes: &[u8]) -> Result<VaultData> {
     let peek: SchemaPeek = ciborium::from_reader(bytes).map_err(payload_error)?;
-    match peek.schema_version {
+    let data = match peek.schema_version {
         1 => ciborium::from_reader(bytes).map_err(payload_error),
         v => Err(Error::UnsupportedSchema(v)),
-    }
+    };
+    // ciborium decodes every string through a 4 KiB buffer on the stack,
+    // in frames below this one; overwrite them now that it has returned.
+    hardening::scrub_stack();
+    data
 }
 
 /// Serialise `data` in the current schema.

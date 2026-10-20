@@ -200,7 +200,8 @@ follow in M10.
   - [x] password strength is worked out once per edit, not every frame (zxcvbn keeps copies) (`src/tui/app.rs`)
   - [x] typed master passwords: backspace wipes, and growing wipes the old buffer (`hardening::push_char`/`pop_char`)
   - [x] CSV export wipes every per-row copy, hidden custom fields included, even on errors; CSV import reuses one record buffer
-  - [x] copies inside libraries that Lockery can't wipe are listed in the README's threat model
+  - [x] copies libraries make and free: wiped by `WipingAllocator`, the binary's global allocator, which wipes every block before freeing it and never grows a block in place; checked by a memory-search test with a control run (`tests/wiping.rs`, `tests/wiping_control.rs`); the stack is scrubbed after decoding (best-effort); copies still in use are listed in the README's threat model
+  - [x] piped passwords are read byte by byte from stdin, bypassing std's long-lived buffer (`hardening::read_stdin_line`)
   - [x] unused `secrecy` dependency removed
 - [x] `cargo audit` and `cargo deny check` clean; CI runs both (`.github/workflows/ci.yml`)
 - [x] README: threat model (the EFF wordlist credit was added in M5)
