@@ -50,6 +50,15 @@ pub enum Error {
     #[error("cryptographic error: {0}")]
     Crypto(String),
 
+    /// Argon2 needs more memory than the system can give it. Checked before
+    /// deriving, so we report it instead of being killed by the OS.
+    #[error("{}", not_enough_memory(*needed_mib, *available_mib))]
+    NotEnoughMemory {
+        needed_mib: u64,
+        /// What the system reported as free, if it reports it at all.
+        available_mib: Option<u64>,
+    },
+
     /// The OS random number generator failed.
     #[error("system random number generator failed: {0}")]
     Rng(String),
@@ -112,4 +121,16 @@ pub enum Error {
     /// Password/passphrase generator options that can't be satisfied.
     #[error("{0}")]
     Generator(String),
+}
+
+/// The message for [`Error::NotEnoughMemory`].
+fn not_enough_memory(needed_mib: u64, available_mib: Option<u64>) -> String {
+    let free = available_mib.map_or_else(
+        || "the system couldn't provide it".to_owned(),
+        |mib| format!("only {mib} MiB is free"),
+    );
+    format!(
+        "this vault's key derivation needs {needed_mib} MiB of memory, but {free}; \
+         close other programs and try again (or, for a new vault, choose less memory)"
+    )
 }

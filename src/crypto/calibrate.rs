@@ -4,12 +4,14 @@
 //!
 //! 1. Use up to 4 lanes (fewer on machines with fewer cores).
 //! 2. Start from the default memory cost (256 MiB) with a single pass.
-//! 3. If even that is slower than the target, halve the memory until it
-//!    fits (but never below the minimum).
+//! 3. If even that is slower than the target, or is more memory than the
+//!    machine can spare, halve the memory until it fits (but never below
+//!    the minimum).
 //! 4. Otherwise add passes. Run time is roughly `fixed + passes × per_pass`,
 //!    where `fixed` (allocating and first touching the memory, starting
-//!    threads) is a large part of a single pass. So we time 1 and 3 passes,
-//!    take the difference to get `per_pass`, and solve for the target.
+//!    threads) is a large part of a single pass. So we time 1 and 3 passes
+//!    (the faster of two runs each, to filter out noise), take the
+//!    difference to get `per_pass`, and solve for the target.
 //!    (Timing only one pass and dividing overestimates the per-pass cost by
 //!    a lot, and lands far below the target.)
 //!
@@ -19,7 +21,7 @@
 use std::time::{Duration, Instant};
 
 use super::{KdfParams, SALT_LEN, derive_key};
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 /// The unlock time `lockery init` aims for by default.
 pub const DEFAULT_TARGET: Duration = Duration::from_secs(1);
@@ -29,10 +31,12 @@ const MAX_LANES: u32 = 4;
 
 /// Measure this machine and return parameters that take roughly `target`.
 ///
-/// Runs Argon2 a few times, so it takes a small multiple of `target`.
+/// Runs Argon2 a few times (each case twice), so it takes a small multiple
+/// of `target`.
 ///
 /// # Errors
-/// Any error from [`derive_key`] while measuring.
+/// Any error from [`derive_key`] while measuring, including
+/// [`Error::NotEnoughMemory`] if even the minimum memory cost doesn't fit.
 pub fn calibrate(target: Duration) -> Result<KdfParams> {
     let lanes = std::thread::available_parallelism()
         .map_or(1, |n| u32::try_from(n.get()).unwrap_or(MAX_LANES))
@@ -47,6 +51,18 @@ fn time_once(params: KdfParams) -> Result<Duration> {
     Ok(start.elapsed())
 }
 
+/// The faster of two runs. A single run can be slowed by anything else the
+/// machine is doing, and one slow 1-pass sample would make the per-pass cost
+/// look like zero (and so pick the maximum passes). Noise only ever adds
+/// time, so the minimum is the better estimate.
+fn fastest_of_two(
+    measure: &mut impl FnMut(KdfParams) -> Result<Duration>,
+    params: KdfParams,
+) -> Result<Duration> {
+    let first = measure(params)?;
+    Ok(first.min(measure(params)?))
+}
+
 /// The calibration algorithm, with the timer injected so it can be tested
 /// without actually running Argon2.
 fn calibrate_with(
@@ -57,12 +73,16 @@ fn calibrate_with(
 ) -> Result<KdfParams> {
     let mut m_cost = start_m_cost_kib.max(KdfParams::MIN_M_COST_KIB);
 
-    // Find a memory cost where one pass fits in the target.
+    // Find a memory cost that this machine can spare and where one pass fits
+    // in the target.
     let one_pass = loop {
         let params = KdfParams::new(m_cost, 1, lanes)?;
-        let elapsed = measure(params)?;
-        if elapsed <= target || m_cost == KdfParams::MIN_M_COST_KIB {
-            break elapsed;
+        let at_minimum = m_cost == KdfParams::MIN_M_COST_KIB;
+        match fastest_of_two(&mut measure, params) {
+            Ok(elapsed) if elapsed <= target || at_minimum => break elapsed,
+            Ok(_) => {}                                             // too slow
+            Err(Error::NotEnoughMemory { .. }) if !at_minimum => {} // too big
+            Err(e) => return Err(e),
         }
         m_cost = (m_cost / 2).max(KdfParams::MIN_M_COST_KIB);
     };
@@ -74,7 +94,7 @@ fn calibrate_with(
 
     // Split the cost into a fixed part and a per-pass part, then spend the
     // remaining budget on passes.
-    let three_passes = measure(KdfParams::new(m_cost, 3, lanes)?)?;
+    let three_passes = fastest_of_two(&mut measure, KdfParams::new(m_cost, 3, lanes)?)?;
     let per_pass = three_passes.saturating_sub(one_pass) / 2;
     let fixed = one_pass.saturating_sub(per_pass);
     let passes = if per_pass.is_zero() {
@@ -143,6 +163,50 @@ mod tests {
         let p = calibrate_with(DEFAULT_TARGET, DEFAULT_M, 1, fake_machine(10_000_000)).unwrap();
         assert_eq!(p.m_cost_kib(), KdfParams::MIN_M_COST_KIB);
         assert_eq!(p.t_cost(), 1);
+    }
+
+    #[test]
+    fn one_slow_sample_does_not_skew_the_result() {
+        // The same machine as `fixed_cost_is_not_counted_per_pass`, but the
+        // first 1-pass run is hit by 400 ms of noise. Taken alone, it would
+        // make 1 pass look slower than 3 (per-pass cost 0 → 64 passes).
+        let mut calls = 0;
+        let machine = |p: KdfParams| {
+            calls += 1;
+            let noise = if calls == 1 { 400 } else { 0 };
+            Ok(Duration::from_millis(200 + noise) + Duration::from_millis(25) * p.t_cost())
+        };
+        let p = calibrate_with(DEFAULT_TARGET, DEFAULT_M, 4, machine).unwrap();
+        assert_eq!(p.t_cost(), 32);
+    }
+
+    #[test]
+    fn short_on_memory_steps_down() {
+        // Only 64 MiB to spare: 256 and 128 MiB are refused, 64 MiB is used.
+        let machine = |p: KdfParams| {
+            if p.m_cost_kib() > DEFAULT_M / 4 {
+                Err(Error::NotEnoughMemory {
+                    needed_mib: u64::from(p.m_cost_kib() / 1024),
+                    available_mib: Some(64),
+                })
+            } else {
+                Ok(Duration::from_millis(100) * p.t_cost())
+            }
+        };
+        let p = calibrate_with(DEFAULT_TARGET, DEFAULT_M, 4, machine).unwrap();
+        assert_eq!(p.m_cost_kib(), DEFAULT_M / 4);
+    }
+
+    #[test]
+    fn short_on_memory_even_at_minimum_is_an_error() {
+        let machine = |_| {
+            Err(Error::NotEnoughMemory {
+                needed_mib: 19,
+                available_mib: Some(1),
+            })
+        };
+        let err = calibrate_with(DEFAULT_TARGET, DEFAULT_M, 4, machine).unwrap_err();
+        assert!(matches!(err, Error::NotEnoughMemory { .. }));
     }
 
     #[test]

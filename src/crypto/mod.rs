@@ -5,11 +5,12 @@
 //! decides what gets authenticated and encrypted, and calls into here.
 
 pub mod calibrate;
+mod memory;
 
 use std::fmt;
 
 use aes_gcm::Aes256Gcm;
-use aes_gcm::aead::{self, Aead, AeadInOut, KeyInit, Payload};
+use aes_gcm::aead::{self, AeadInOut, KeyInit};
 use argon2::{Algorithm, Argon2, Version};
 use chacha20poly1305::XChaCha20Poly1305;
 use rand::TryRng;
@@ -140,7 +141,7 @@ pub fn open(
 // Both ciphers implement the same RustCrypto `Aead` traits, so one generic
 // implementation covers them.
 
-fn seal_with<C: Aead + KeyInit>(
+fn seal_with<C: AeadInOut + KeyInit>(
     key: &Key,
     nonce: &[u8],
     aad: &[u8],
@@ -149,15 +150,18 @@ fn seal_with<C: Aead + KeyInit>(
     let cipher = C::new_from_slice(key.as_slice()).map_err(|e| Error::Crypto(e.to_string()))?;
     let nonce = aead::Nonce::<C>::try_from(nonce)
         .map_err(|_| Error::Crypto("nonce has the wrong length".into()))?;
+    // Encrypt in place in a `SecretBuf`, mirroring `open_with`. `Aead::encrypt`
+    // would first copy the plaintext into an ordinary `Vec`, which isn't
+    // locked and so could be written to swap. Room for the tag is reserved
+    // up front so the buffer never needs to grow.
+    let mut buf = SecretBuf::with_capacity(plaintext.len() + TAG_LEN);
+    buf.extend_from_slice(plaintext)
+        .map_err(|e| Error::Crypto(e.to_string()))?;
     cipher
-        .encrypt(
-            &nonce,
-            Payload {
-                msg: plaintext,
-                aad,
-            },
-        )
-        .map_err(|e| Error::Crypto(e.to_string()))
+        .encrypt_in_place(&nonce, aad, &mut buf)
+        .map_err(|e| Error::Crypto(e.to_string()))?;
+    // Only ciphertext is left, which needn't stay locked.
+    Ok(buf.to_vec())
 }
 
 fn open_with<C: AeadInOut + KeyInit>(
@@ -318,8 +322,9 @@ impl Default for KdfParams {
 /// Run Argon2id over `password` and `salt`, producing a 256-bit key.
 ///
 /// # Errors
-/// [`Error::Crypto`] if Argon2 rejects the inputs (it shouldn't, given
-/// validated [`KdfParams`]).
+/// [`Error::NotEnoughMemory`] if the system can't spare the memory `params`
+/// asks for (checked before any is allocated); [`Error::Crypto`] if Argon2
+/// rejects the inputs (it shouldn't, given validated [`KdfParams`]).
 pub fn derive_key(password: &[u8], salt: &[u8; SALT_LEN], params: KdfParams) -> Result<Key> {
     let argon_params = argon2::Params::new(
         params.m_cost_kib,
@@ -328,6 +333,10 @@ pub fn derive_key(password: &[u8], salt: &[u8; SALT_LEN], params: KdfParams) -> 
         Some(KEY_LEN),
     )
     .map_err(|e| Error::Crypto(e.to_string()))?;
+    // Argon2 rounds the cost down to whole blocks per lane; this is exactly
+    // what it will allocate.
+    let needed = argon_params.block_count() as u64 * argon2::Block::SIZE as u64;
+    ensure_memory(needed, memory::available_bytes())?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon_params);
 
     // Derived straight into its final, locked home. Returning a `[u8; 32]`
@@ -336,8 +345,30 @@ pub fn derive_key(password: &[u8], salt: &[u8; SALT_LEN], params: KdfParams) -> 
     let mut key = SecretBuf::zeroed(KEY_LEN);
     argon
         .hash_password_into(password, salt, &mut key)
-        .map_err(|e| Error::Crypto(e.to_string()))?;
+        .map_err(|e| match e {
+            // The allocation itself failed (e.g. Windows' commit limit).
+            argon2::Error::OutOfMemory => Error::NotEnoughMemory {
+                needed_mib: needed.div_ceil(MIB),
+                available_mib: None,
+            },
+            other => Error::Crypto(other.to_string()),
+        })?;
     Ok(key)
+}
+
+const MIB: u64 = 1024 * 1024;
+
+/// Refuse to run Argon2 with more memory than the system can spare. A
+/// crafted or simply oversized header (a vault made on a bigger machine)
+/// otherwise gets the process OOM-killed rather than a clear error.
+fn ensure_memory(needed: u64, available: Option<u64>) -> Result<()> {
+    match available {
+        Some(available) if needed > available => Err(Error::NotEnoughMemory {
+            needed_mib: needed.div_ceil(MIB),
+            available_mib: Some(available / MIB),
+        }),
+        _ => Ok(()),
+    }
 }
 
 /// A one-line summary, e.g. "XChaCha20-Poly1305, Argon2id 256 MiB × 3 passes ×
@@ -356,14 +387,12 @@ pub fn describe(cipher: CipherId, kdf: KdfParams) -> String {
 
 /// Compare two keys in constant time: every byte is looked at, whatever
 /// the first difference, so the time taken says nothing about the key.
+/// Keys of different lengths are never equal (a prefix doesn't count).
 #[must_use]
 pub fn keys_equal(a: &Key, b: &Key) -> bool {
-    let diff = a
-        .iter()
-        .zip(b.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y));
-    // Stop the optimiser from turning the fold into an early-exit compare.
-    std::hint::black_box(diff) == 0
+    // `SecretBuf`'s `PartialEq` is the constant-time compare, including the
+    // length check; one implementation, not two that can drift apart.
+    a == b
 }
 
 /// A derived key bundled with the salt and parameters that produced it.
@@ -514,6 +543,38 @@ mod tests {
         assert!(keys_equal(&a, &b));
         b[KEY_LEN - 1] = 2; // differs only in the last byte
         assert!(!keys_equal(&a, &b));
+    }
+
+    #[test]
+    fn keys_equal_rejects_prefixes() {
+        let a: Key = SecretBuf::from_slice(&[1u8; KEY_LEN]);
+        let short: Key = SecretBuf::from_slice(&[1u8; KEY_LEN - 1]);
+        let empty: Key = SecretBuf::from_slice(&[]);
+        assert!(!keys_equal(&a, &short));
+        assert!(!keys_equal(&short, &a));
+        assert!(!keys_equal(&a, &empty));
+    }
+
+    #[test]
+    fn memory_check_refuses_more_than_available() {
+        assert!(
+            ensure_memory(256 * MIB, None).is_ok(),
+            "unknown → let it try"
+        );
+        assert!(ensure_memory(256 * MIB, Some(256 * MIB)).is_ok());
+        let err = ensure_memory(256 * MIB + 1, Some(100 * MIB + 5)).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::NotEnoughMemory {
+                needed_mib: 257,
+                available_mib: Some(100)
+            }
+        ));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("257 MiB") && msg.contains("only 100 MiB is free"),
+            "{msg}"
+        );
     }
 
     #[test]

@@ -48,7 +48,7 @@ Lockery is an alpha. Its design hasn't been reviewed by anyone outside the proje
 **What it protects against**
 
 - **Someone with a copy of your vault file** (a stolen laptop, a backup, a synced folder). Without the master password, the file is useless: Argon2id makes guessing slow, and everything except the encryption settings is encrypted, including titles, usernames, URLs and the number of entries. The size is padded to 4 KiB steps.
-- **Tampering with the file.** The whole header, Argon2 and cipher settings included, is authenticated. A changed file doesn't open, and settings outside the allowed range are rejected before Argon2 even runs.
+- **Tampering with the file.** The whole header, Argon2 and cipher settings included, is authenticated. A changed file doesn't open, and settings outside the allowed range are rejected before Argon2 even runs. If a vault asks for more memory than the computer can spare, Lockery says so instead of being killed by the system for running out.
 - **Losing data in a crash** while saving, or two copies of Lockery saving at once. See *Crash safety* above.
 - **Passwords left on the clipboard.** They're cleared after a timeout, on lock and on quit, and even when Lockery crashes or is killed by a signal.
 - **Secrets leaking out of a running Lockery:**
@@ -73,7 +73,7 @@ Lockery is an alpha. Its design hasn't been reviewed by anyone outside the proje
 
   The vault decoder also uses scratch space on the stack, which no allocator sees. Lockery overwrites that part of the stack after opening a vault, but that is best effort. Outside Lockery, the kernel and your terminal see everything you type and everything shown.
 
-  Entry contents (as opposed to the key and the decrypted vault file) are many small allocations, and they are wiped but not locked against swap. Use encrypted swap, or none, if that matters to you.
+  Two kinds of secret memory are wiped but not locked against swap. Entry contents (as opposed to the key and the decrypted vault file) are many small allocations. And while it unlocks the vault, Argon2 fills its working memory (256 MiB by default) with values derived from your master password. That memory is used for about a second and wiped as it's freed, but it is far bigger than the memory-locking limit, so it can't be kept out of swap. An attacker who later reads it from swap could test password guesses faster. Use encrypted swap, zram, or no swap at all, if that matters to you.
 
 **Per platform**
 
