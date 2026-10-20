@@ -4,7 +4,7 @@
 //! When stdin is not a terminal (a pipe, or the integration tests), each
 //! answer is read as one line instead, which keeps the CLI scriptable.
 
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::io::{self, IsTerminal, Write};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
@@ -43,16 +43,11 @@ pub fn confirm(question: &str) -> io::Result<bool> {
     ))
 }
 
-/// Read one line from stdin, without the trailing newline.
+/// Read one line from stdin, without the trailing newline. Every answer
+/// goes through the same unbuffered reader, so a piped password never sits
+/// in std's stdin buffer (and answers stay in order).
 fn read_line() -> io::Result<Zeroizing<String>> {
-    let mut line = Zeroizing::new(String::with_capacity(PASSWORD_CAPACITY));
-    if io::stdin().lock().read_line(&mut line)? == 0 {
-        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "no input"));
-    }
-    while line.ends_with(['\n', '\r']) {
-        line.pop();
-    }
-    Ok(line)
+    lockery::hardening::read_stdin_line(PASSWORD_CAPACITY)
 }
 
 /// Read keystrokes in raw mode until Enter, echoing nothing.

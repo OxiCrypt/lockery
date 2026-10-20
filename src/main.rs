@@ -25,6 +25,11 @@ use zeroize::Zeroizing;
 
 use crate::cli::{Cli, Command, InitArgs};
 
+/// Every freed block is wiped first, so copies of secrets that libraries
+/// make and free don't linger in memory. See `hardening::WipingAllocator`.
+#[global_allocator]
+static ALLOCATOR: hardening::WipingAllocator = hardening::WipingAllocator;
+
 fn main() -> anyhow::Result<()> {
     // Before anything else, so no secret is ever in a process that could
     // dump core or be read by a same-user debugger.

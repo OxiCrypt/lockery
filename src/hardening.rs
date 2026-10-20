@@ -1,6 +1,6 @@
 //! Process hardening and locked memory for secrets.
 //!
-//! Two independent defences against secrets leaking out of process memory:
+//! Independent defences against secrets leaking out of process memory:
 //!
 //! * [`harden_process`] stops the OS from writing core dumps, and on Linux
 //!   marks the process non-dumpable, which also stops other processes of the
@@ -9,9 +9,15 @@
 //!   data (the vault key and the decrypted payload). It lives on whole pages
 //!   of its own, is `mlock`ed so it is never written to swap (best-effort,
 //!   see [`set_lock_memory`]), and is wiped before it is freed.
+//! * [`WipingAllocator`] wipes *every* heap block as it's freed, which
+//!   catches the copies libraries make and free on their own;
+//!   [`scrub_stack`] does the same, best-effort, for stack scratch space.
+//! * [`read_stdin_line`] reads piped passwords without std's long-lived
+//!   stdin buffer, and [`push_char`]/[`pop_char`] edit typed ones in place.
 //!
-//! This is the only module that uses `unsafe`: each libc call and the raw
-//! allocation opt in locally with a comment explaining why it is sound.
+//! This is the only module that uses `unsafe`: each libc call, the raw
+//! allocation and the allocator opt in locally with a comment explaining
+//! why it is sound.
 //! Entry strings are *not* locked: they are many small allocations scattered
 //! over the heap, and locking the whole process would put Argon2's hundreds
 //! of MiB over the usual `RLIMIT_MEMLOCK`. The README's threat model says so.
@@ -396,6 +402,166 @@ impl fmt::Debug for SecretBuf {
 }
 
 // ---------------------------------------------------------------------------
+// Wiping allocator
+// ---------------------------------------------------------------------------
+
+/// A global allocator that zeroes every block before it's freed.
+///
+/// Lockery wipes the secrets it owns, but the libraries it uses (the text
+/// editor widget, zxcvbn, the CBOR decoder, the CSV parser, the clipboard
+/// library, Argon2) make copies of their own and free them unwiped. Every
+/// one of those frees goes through the global allocator, so wiping here
+/// catches them all. Growing a buffer never happens in place: a new block is
+/// allocated, the contents copied, and the old block wiped and freed, so no
+/// stale copy is left behind by a `Vec` or `String` that grows.
+///
+/// It can't help with memory that is still in use (the clipboard library
+/// must hold what it is pasting), with the stack (see [`scrub_stack`]), or
+/// with copies outside the process. The cost is a `memset` per free: about
+/// the time Argon2 takes to fill its memory once, i.e. a few percent of an
+/// unlock, and nothing noticeable elsewhere.
+///
+/// Installed by the binary (`src/main.rs`):
+///
+/// ```ignore
+/// #[global_allocator]
+/// static ALLOCATOR: lockery::hardening::WipingAllocator = lockery::hardening::WipingAllocator;
+/// ```
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WipingAllocator;
+
+/// Zero `len` bytes at `ptr` in a way the optimiser can't remove.
+///
+/// A plain `memset` right before `free` is a dead store that LLVM is
+/// allowed to delete. `black_box` makes the pointer (and so the memory
+/// behind it) look used afterwards, which keeps the store. `zeroize`'s
+/// volatile byte loop would also work, but is far slower on Argon2's
+/// hundreds of MiB.
+fn wipe_raw(ptr: *mut u8, len: usize) {
+    // SAFETY: callers pass a block they own of at least `len` bytes, about
+    // to be freed, that nothing else is using.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::ptr::write_bytes(ptr, 0, len);
+    }
+    std::hint::black_box(ptr);
+}
+
+// SAFETY: every method forwards to `System`, which upholds the `GlobalAlloc`
+// contract; the only additions are writes inside blocks we own (before they
+// are freed) and copies between two live blocks of the right sizes.
+#[allow(unsafe_code)]
+unsafe impl alloc::GlobalAlloc for WipingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: forwarded unchanged; `layout` is valid per the contract.
+        unsafe { alloc::System.alloc(layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: as for `alloc`.
+        unsafe { alloc::System.alloc_zeroed(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        wipe_raw(ptr, layout.size());
+        // SAFETY: `ptr` was allocated by `System` (through us) with `layout`.
+        unsafe { alloc::System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        // SAFETY: `new_size` is non-zero and doesn't overflow when rounded to
+        // `layout.align()`, per the `realloc` contract.
+        let new_layout = unsafe { Layout::from_size_align_unchecked(new_size, layout.align()) };
+        // SAFETY: as for `alloc`.
+        let new = unsafe { alloc::System.alloc(new_layout) };
+        if !new.is_null() {
+            // SAFETY: both blocks are live, distinct, and at least
+            // `min(old, new)` bytes long; the old one is then wiped and
+            // freed with the layout it was allocated with. On failure the
+            // old block is left untouched, as `realloc` requires.
+            unsafe {
+                std::ptr::copy_nonoverlapping(ptr, new, layout.size().min(new_size));
+                self.dealloc(ptr, layout);
+            }
+        }
+        new
+    }
+}
+
+/// Overwrite a stretch of the stack below the caller with zeros.
+///
+/// Some libraries keep scratch space on the stack (ciborium decodes every
+/// string through a 4 KiB stack buffer), which no allocator sees. Calling
+/// this right after such a call returns overwrites the frames it used, since
+/// they sit just below the caller's. Best-effort: 64 KiB covers the decoder
+/// many times over.
+#[inline(never)]
+// The array must be on the stack: overwriting the stack is the whole point.
+// 64 KiB is far below any thread's stack size (2 MiB for spawned threads).
+#[allow(clippy::large_stack_arrays)]
+pub fn scrub_stack() {
+    let mut area = [0u8; 64 * 1024];
+    // Volatile writes, so the "unused" array isn't optimised away.
+    area.zeroize();
+    std::hint::black_box(&area);
+}
+
+/// Read one line from stdin, a byte at a time, without the trailing
+/// newline. Unlike `io::stdin()`, nothing is kept in a buffer of its own:
+/// std's stdin buffer lives for the whole process and would hold a piped
+/// password long after it was used.
+///
+/// On Windows this falls back to std's buffered stdin for now.
+///
+/// # Errors
+/// [`io::ErrorKind::UnexpectedEof`] if stdin is closed before anything is
+/// read, `InvalidData` if the line isn't UTF-8, or any read error.
+pub fn read_stdin_line(capacity: usize) -> io::Result<zeroize::Zeroizing<String>> {
+    let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(capacity));
+    #[cfg(unix)]
+    let got_any = {
+        let mut got_any = false;
+        while let Some(byte) = sys::read_stdin_byte()? {
+            got_any = true;
+            if byte == b'\n' {
+                break;
+            }
+            if bytes.len() == bytes.capacity() {
+                // Grow without leaving the old copy behind (the wiping
+                // allocator would too, but this doesn't depend on it).
+                let mut bigger =
+                    zeroize::Zeroizing::new(Vec::with_capacity(bytes.capacity() * 2 + 1));
+                bigger.extend_from_slice(&bytes);
+                bytes = bigger;
+            }
+            bytes.push(byte);
+        }
+        got_any
+    };
+    #[cfg(not(unix))]
+    let got_any = {
+        use std::io::BufRead as _;
+        let n = io::stdin().lock().read_until(b'\n', &mut bytes)?;
+        if bytes.last() == Some(&b'\n') {
+            bytes.pop();
+        }
+        n > 0
+    };
+    if !got_any {
+        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "no input"));
+    }
+    if bytes.last() == Some(&b'\r') {
+        bytes.pop();
+    }
+    let text = String::from_utf8(std::mem::take(&mut *bytes)).map_err(|e| {
+        // Don't let the error carry (and later free) the bytes unwiped.
+        e.into_bytes().zeroize();
+        io::Error::new(io::ErrorKind::InvalidData, "input isn't valid UTF-8")
+    })?;
+    Ok(zeroize::Zeroizing::new(text))
+}
+
+// ---------------------------------------------------------------------------
 // Typed secrets
 // ---------------------------------------------------------------------------
 
@@ -492,6 +658,26 @@ mod sys {
         #[allow(unsafe_code)]
         unsafe {
             libc::munlock(ptr.as_ptr().cast(), len);
+        }
+    }
+
+    /// One byte from fd 0, or `None` at end of input. Retries on `EINTR`.
+    pub fn read_stdin_byte() -> std::io::Result<Option<u8>> {
+        let mut byte = 0u8;
+        loop {
+            // SAFETY: reads at most one byte into a local we own.
+            #[allow(unsafe_code)]
+            let n = unsafe { libc::read(0, (&raw mut byte).cast(), 1) };
+            match n {
+                1 => return Ok(Some(byte)),
+                0 => return Ok(None),
+                _ => {
+                    let err = std::io::Error::last_os_error();
+                    if err.kind() != std::io::ErrorKind::Interrupted {
+                        return Err(err);
+                    }
+                }
+            }
         }
     }
 }

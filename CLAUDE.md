@@ -36,7 +36,7 @@ Library (`src/lib.rs`) holds all logic; `src/main.rs` is a thin CLI (`cli.rs`, `
 - `vault/manage.rs`: rename/delete whole vaults. `paths.rs`: vault names and data dir. `config.rs`: TOML config.
 - `generator/`: password/passphrase generators (embedded EFF wordlist), `random_below` (rejection sampling), `Strength` (zxcvbn).
 - `csv_io/`: CSV import (Bitwarden, KeePassXC, Chrome, Firefox; columns matched by name) and Bitwarden-format export. Named `csv_io` to avoid clashing with the `csv` crate.
-- `hardening.rs`: core dumps off / `PR_SET_DUMPABLE` (`harden_process`, first thing in `main`), and `SecretBuf`, the page-aligned, `mlock`ed, wiped-on-drop buffer for the key and decrypted payload (`[security] lock_memory`). The only module with `unsafe`.
+- `hardening.rs`: core dumps off / `PR_SET_DUMPABLE` (`harden_process`, first thing in `main`), and `SecretBuf`, the page-aligned, `mlock`ed, wiped-on-drop buffer for the key and decrypted payload (`[security] lock_memory`). `WipingAllocator` (installed in `main.rs`, so all freed heap memory is zeroed; `tests/wiping.rs` proves it by searching process memory), `scrub_stack`, `read_stdin_line`. The only module with `unsafe`.
 - `clipboard.rs`: copy with timed clear (only if the clipboard still holds our copy), `FakeBackend` for tests, `emergency_clear` for panic/signal handlers.
 - `tui/`: `app.rs` is all state and behaviour with **no terminal I/O** (testable). `keymap.rs` is the single table of key bindings that drives input, the footer and the help overlay. `ui.rs`/`views/`/`widgets/` only read state. `form.rs` is the shared form widget (text areas wiped on drop). `mod.rs::run` owns the terminal, the panic hook and signals.
 
