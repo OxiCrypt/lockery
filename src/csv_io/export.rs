@@ -182,8 +182,14 @@ pub fn write_new_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
         )),
         _ => Error::Io(e),
     })?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    if let Err(e) = written {
+        // Don't leave half a file of plaintext passwords behind (e.g. when
+        // the disk is full). We just created it, so it is ours to remove.
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(Error::Io(e));
+    }
     Ok(())
 }
 

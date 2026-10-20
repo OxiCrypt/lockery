@@ -19,6 +19,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::clock::{self, Mark, WallClock};
+
 use zeroize::Zeroizing;
 
 /// Somewhere text can be copied to. The system clipboard in the app, an
@@ -104,8 +106,11 @@ pub struct Clipboard {
     copied: Copied,
     /// Which field was copied ("password", "username"), for the countdown.
     what: &'static str,
-    clear_at: Option<Instant>,
+    /// When the current copy was made, if it is still waiting to be cleared.
+    /// Measured on both clocks, so time asleep counts (see [`clock`]).
+    copied_at: Option<Mark>,
     timeout: Duration,
+    wall: WallClock,
 }
 
 impl Clipboard {
@@ -128,9 +133,16 @@ impl Clipboard {
             backend: None,
             copied: Arc::new(Mutex::new(None)),
             what: "",
-            clear_at: None,
+            copied_at: None,
             timeout,
+            wall: clock::system_wall_clock(),
         }
+    }
+
+    /// Read wall-clock time from `wall` instead of the system (tests use
+    /// this to fake a suspend).
+    pub fn set_wall_clock(&mut self, wall: WallClock) {
+        self.wall = wall;
     }
 
     fn backend(&mut self) -> Result<&mut dyn Backend, String> {
@@ -149,14 +161,14 @@ impl Clipboard {
         self.backend()?.set_secret(text)?;
         *lock(&self.copied) = Some(Zeroizing::new(text.to_owned()));
         self.what = what;
-        self.clear_at = Some(now + self.timeout);
+        self.copied_at = Some(Mark::new(now, (self.wall)()));
         Ok(())
     }
 
     /// Clear the clipboard if the timer ran out. Returns whether it cleared.
     pub fn tick(&mut self, now: Instant) -> bool {
-        match self.clear_at {
-            Some(at) if now >= at => {
+        match self.copied_at {
+            Some(at) if at.elapsed(now, (self.wall)()) >= self.timeout => {
                 self.clear();
                 true
             }
@@ -166,7 +178,7 @@ impl Clipboard {
 
     /// Clear now (on lock or quit), if the clipboard still holds our copy.
     pub fn clear(&mut self) {
-        self.clear_at = None;
+        self.copied_at = None;
         let Some(ours) = lock(&self.copied).take() else {
             return;
         };
@@ -178,7 +190,8 @@ impl Clipboard {
     /// `(what, seconds left)` while a copy is waiting to be cleared.
     #[must_use]
     pub fn countdown(&self, now: Instant) -> Option<(&'static str, u64)> {
-        let left = self.clear_at?.saturating_duration_since(now);
+        let elapsed = self.copied_at?.elapsed(now, (self.wall)());
+        let left = self.timeout.saturating_sub(elapsed);
         // Round up, so "1s" shows until the very end rather than "0s".
         Some((
             self.what,
@@ -306,6 +319,22 @@ mod tests {
         assert!(clip.tick(start + T));
         assert_eq!(fake.text(), None);
         assert_eq!(clip.countdown(start + T), None);
+    }
+
+    #[test]
+    fn time_asleep_counts_towards_the_timeout() {
+        let fake = FakeBackend::default();
+        let mut clip = fake.clipboard(T);
+        let wall = std::rc::Rc::new(std::cell::Cell::new(std::time::SystemTime::now()));
+        let reader = std::rc::Rc::clone(&wall);
+        clip.set_wall_clock(std::rc::Rc::new(move || reader.get()));
+        let start = Instant::now();
+        clip.copy("hunter2", "password", start).unwrap();
+
+        // A suspend: the monotonic clock barely moves, the wall clock does.
+        wall.set(wall.get() + Duration::from_secs(3600));
+        assert!(clip.tick(start + Duration::from_secs(1)));
+        assert_eq!(fake.text(), None);
     }
 
     #[test]

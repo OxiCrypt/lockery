@@ -71,6 +71,13 @@ impl Strength {
         Self { score: score as u8 }
     }
 
+    /// Too easy to guess for a master password (below "strong"): Lockery
+    /// warns, and asks before using it.
+    #[must_use]
+    pub fn is_weak(self) -> bool {
+        self.score < 3
+    }
+
     /// e.g. "very strong".
     #[must_use]
     pub fn label(self) -> &'static str {
@@ -110,6 +117,7 @@ mod tests {
             4
         );
         assert_eq!(Strength { score: 2 }.label(), "fair");
+        assert!(Strength { score: 2 }.is_weak() && !Strength { score: 3 }.is_weak());
         // Very long inputs are handled (and cheap).
         let long = "x".repeat(10_000);
         let _ = Strength::of(&long, &[]);

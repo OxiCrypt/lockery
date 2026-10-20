@@ -24,11 +24,12 @@
 
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use tempfile::NamedTempFile;
 
+use super::format::MAX_FILE_LEN;
 use crate::error::{Error, Result};
 
 /// Suffix of the lock file next to the vault.
@@ -120,18 +121,19 @@ impl VaultFile {
     /// Read the whole (encrypted) vault file.
     ///
     /// # Errors
-    /// Any I/O error, including `NotFound` for a vault not yet saved.
+    /// [`Error::Malformed`] if the file is bigger than any vault can be, or
+    /// any I/O error, including `NotFound` for a vault not yet saved.
     pub fn read(&self) -> Result<Vec<u8>> {
-        Ok(fs::read(&self.path)?)
+        read_capped(&self.path)
     }
 
     /// Read the previous-version backup, for recovery when the main file is
     /// unreadable.
     ///
     /// # Errors
-    /// Any I/O error, including `NotFound` if there is no backup.
+    /// As for [`read`](Self::read), with `NotFound` if there is no backup.
     pub fn read_backup(&self) -> Result<Vec<u8>> {
-        Ok(fs::read(self.backup_path())?)
+        read_capped(&self.backup_path())
     }
 
     /// Atomically replace the vault with `bytes`.
@@ -238,6 +240,26 @@ impl VaultFile {
     }
 }
 
+/// Read a whole vault file, refusing one bigger than [`MAX_FILE_LEN`]
+/// before loading it. `fs::read` would allocate for the whole file first,
+/// so a huge (or crafted) file could exhaust memory before the format check
+/// that rejects it even ran.
+fn read_capped(path: &Path) -> Result<Vec<u8>> {
+    let too_big = || Error::Malformed("file is too large to be a vault");
+    let file = File::open(path)?;
+    let len = file.metadata()?.len();
+    if len > MAX_FILE_LEN {
+        return Err(too_big());
+    }
+    let mut bytes = Vec::with_capacity(usize::try_from(len).map_err(|_| too_big())?);
+    // Capped again while reading, in case the file grows in the meantime.
+    file.take(MAX_FILE_LEN + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_FILE_LEN {
+        return Err(too_big());
+    }
+    Ok(bytes)
+}
+
 /// `foo/bar.lockery` + `.lock` → `foo/bar.lockery.lock`.
 fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut s = path.as_os_str().to_owned();
@@ -294,6 +316,26 @@ mod tests {
         assert_eq!(vault.read().unwrap(), b"two");
         assert_eq!(vault.read_backup().unwrap(), b"one");
         assert_eq!(temp_files(dir.path()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn oversized_file_is_refused_before_it_is_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultFile::open(dir.path().join("v.lockery")).unwrap();
+        // Sparse, so it takes no disk space, but reading it would need
+        // more than 1 GiB of memory.
+        File::create(vault.path())
+            .unwrap()
+            .set_len(MAX_FILE_LEN + 1)
+            .unwrap();
+        assert!(matches!(vault.read(), Err(Error::Malformed(_))));
+
+        // A normal-sized file still reads.
+        File::create(vault.backup_path())
+            .unwrap()
+            .set_len(1000)
+            .unwrap();
+        assert_eq!(vault.read_backup().unwrap().len(), 1000);
     }
 
     #[test]

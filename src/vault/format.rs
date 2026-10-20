@@ -51,6 +51,11 @@ const LEN_PREFIX: usize = 8;
 /// is a few hundred KiB at most.
 const MAX_CIPHERTEXT_LEN: u64 = 1 << 30;
 
+/// The largest file that can be a valid vault: the longest header (64 bytes
+/// plus a 24-byte nonce) and the largest ciphertext. Storage refuses to read
+/// anything bigger, so a huge file is rejected before it is loaded.
+pub const MAX_FILE_LEN: u64 = 64 + 24 + MAX_CIPHERTEXT_LEN;
+
 /// The parsed, *unauthenticated* header. Nothing in here can be trusted
 /// until the ciphertext has been successfully decrypted with it as AAD.
 #[derive(Clone, Debug, PartialEq, Eq)]

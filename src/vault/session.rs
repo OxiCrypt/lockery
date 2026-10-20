@@ -89,13 +89,41 @@ impl Vault {
                 let Ok((opened, data)) = Self::decrypt(&file.read_backup()?, password) else {
                     return Err(e);
                 };
-                let aside = Self::move_aside(&file)?;
-                let vault = Self::from_opened(file, opened, data, Some(aside));
-                vault.write(&vault.data)?;
-                Ok(vault)
+                Self::restore_from_backup(file, opened, data, |v| v.write(&v.data))
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Move the damaged main file aside and `save` the data recovered from
+    /// the backup in its place. (`save` is a parameter so tests can make it
+    /// fail.)
+    ///
+    /// The damaged file has to go first: a save copies the current main file
+    /// to `.bak`, which would overwrite the good backup with the damaged one.
+    /// But if the save then fails, the vault path is left empty, and the
+    /// vault would look deleted ("no vault found", gone from the picker).
+    /// So on failure the damaged file is put back: the next unlock fails the
+    /// same way and retries recovery from the backup, which is untouched.
+    fn restore_from_backup(
+        file: VaultFile,
+        opened: format::Opened,
+        data: VaultData,
+        save: impl FnOnce(&Self) -> Result<()>,
+    ) -> Result<Self> {
+        let aside = Self::move_aside(&file)?;
+        let vault = Self::from_opened(file, opened, data, Some(aside.clone()));
+        if let Err(e) = save(&vault) {
+            // A save that failed after its rename (fsyncing the directory)
+            // did put the recovered vault in place; keep that one.
+            if !vault.path().exists() {
+                // If even this fails, the original error is the one to
+                // report; the damaged file is still next to the vault.
+                let _ = std::fs::rename(&aside, vault.path());
+            }
+            return Err(e);
+        }
+        Ok(vault)
     }
 
     fn decrypt(bytes: &[u8], password: &[u8]) -> Result<(format::Opened, VaultData)> {
@@ -504,6 +532,31 @@ mod tests {
                 .recovered_from_backup()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn failed_recovery_save_puts_the_damaged_file_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut v = new_vault(dir.path(), CipherId::default());
+        v.add(login("First", "1")).unwrap(); // .bak now holds the empty vault
+        let path = v.path().to_path_buf();
+        drop(v);
+        let bytes = fs::read(&path).unwrap();
+        fs::write(&path, &bytes[..100]).unwrap();
+
+        // Recover, but make the save fail (e.g. the disk is full).
+        let file = VaultFile::open(&path).unwrap();
+        let (opened, data) = Vault::decrypt(&file.read_backup().unwrap(), PW).unwrap();
+        let result = Vault::restore_from_backup(file, opened, data, |_| {
+            Err(Error::Io(std::io::Error::other("disk full")))
+        });
+        assert!(result.is_err());
+
+        // The vault hasn't vanished: the damaged file is back in place, and
+        // the next unlock recovers from the untouched backup.
+        assert_eq!(fs::read(&path).unwrap(), &bytes[..100]);
+        let v = Vault::unlock(&path, PW).unwrap();
+        assert!(v.recovered_from_backup().is_some());
     }
 
     #[test]

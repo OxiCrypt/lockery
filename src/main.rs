@@ -16,6 +16,7 @@ use lockery::config::Config;
 use lockery::crypto::calibrate::{self, DEFAULT_TARGET};
 use lockery::crypto::{self, CipherId, KdfParams};
 use lockery::csv_io;
+use lockery::generator::Strength;
 use lockery::hardening;
 use lockery::paths::{self, VaultName};
 use lockery::tui::{self, App, StatusKind, VaultTarget};
@@ -87,8 +88,9 @@ fn init(config: &Config, args: &InitArgs) -> anyhow::Result<()> {
     if *prompt::password("Repeat master password: ")? != *password {
         bail!("passwords don't match; nothing was created");
     }
-    let strength = zxcvbn::zxcvbn(&password, &[name.as_str()]);
-    if strength.score() < zxcvbn::Score::Three
+    // `Strength` caps how much it analyses: zxcvbn gets very slow on long
+    // input, and a piped password can be any length.
+    if Strength::of(&password, &[name.as_str()]).is_weak()
         && !prompt::confirm("That password is easy to guess. Use it anyway?")?
     {
         bail!("cancelled; nothing was created");

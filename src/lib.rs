@@ -4,6 +4,7 @@
 //! independently of the terminal UI; `main.rs` is a thin CLI wrapper.
 
 pub mod clipboard;
+pub mod clock;
 pub mod config;
 pub mod crypto;
 pub mod csv_io;

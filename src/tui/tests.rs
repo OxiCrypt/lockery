@@ -5,8 +5,10 @@
 //! review and accept new ones with `cargo insta review` (or rerun the tests
 //! with `INSTA_UPDATE=always` and check the diff in git).
 
+use std::cell::Cell;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::rc::Rc;
+use std::time::{Duration, Instant, SystemTime};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use jiff::Timestamp;
@@ -269,6 +271,22 @@ fn idle_timeout_locks() {
     app.tick(start + idle + Duration::from_secs(1));
     assert!(!app.is_unlocked());
     assert!(screen(&app, 60, 16).contains("Locked after 5 min of inactivity."));
+}
+
+#[test]
+fn time_suspended_counts_towards_the_idle_lock() {
+    let dir = setup();
+    let mut app = unlocked_app(dir.path());
+    let wall = Rc::new(Cell::new(SystemTime::now()));
+    let reader = Rc::clone(&wall);
+    app.set_wall_clock(Rc::new(move || reader.get()));
+    let start = Instant::now();
+    press_at(&mut app, KeyCode::Down, start);
+
+    // The lid closes overnight: `Instant` stops, the wall clock doesn't.
+    wall.set(wall.get() + Duration::from_secs(8 * 3600));
+    app.tick(start + Duration::from_secs(1));
+    assert!(!app.is_unlocked());
 }
 
 #[test]

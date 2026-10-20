@@ -26,7 +26,8 @@
 
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::rc::Rc;
+use std::time::{Duration, Instant, SystemTime};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use jiff::tz::TimeZone;
@@ -41,6 +42,7 @@ use super::search::Search;
 use super::settings::SettingsState;
 use super::transfer::{self, ImportPreview};
 use crate::clipboard::{Clipboard, Copied};
+use crate::clock::{self, Mark, WallClock};
 use crate::config::{Config, GeneratorConfig};
 use crate::crypto::calibrate::{self, DEFAULT_TARGET};
 use crate::crypto::{self, CipherId, KdfParams};
@@ -134,7 +136,10 @@ pub struct App {
     /// Copies to the system clipboard, cleared after a timeout.
     clipboard: Clipboard,
     quit: bool,
-    last_activity: Instant,
+    /// The latest key press, on both clocks so that time spent suspended
+    /// counts towards the idle lock (see [`crate::clock`]).
+    last_activity: Mark,
+    wall: WallClock,
     /// The time of the latest key press or tick, for the clipboard countdown.
     now: Instant,
     /// Time zone timestamps are shown in (UTC in tests, for stable output).
@@ -350,7 +355,8 @@ impl App {
             gen_passphrase: false,
             clipboard: Clipboard::system(clear_after),
             quit: false,
-            last_activity: now,
+            last_activity: Mark::new(now, SystemTime::now()),
+            wall: clock::system_wall_clock(),
             now,
             tz: TimeZone::system(),
             list_height: Cell::new(10),
@@ -369,8 +375,18 @@ impl App {
     }
 
     /// Use `clipboard` instead of the system clipboard (tests use a fake).
-    pub fn set_clipboard(&mut self, clipboard: Clipboard) {
+    pub fn set_clipboard(&mut self, mut clipboard: Clipboard) {
+        clipboard.set_wall_clock(Rc::clone(&self.wall));
         self.clipboard = clipboard;
+    }
+
+    /// Read wall-clock time from `wall` instead of the system, for the idle
+    /// lock and the clipboard timer (tests use this to fake a suspend).
+    pub fn set_wall_clock(&mut self, wall: WallClock) {
+        self.clipboard.set_wall_clock(Rc::clone(&wall));
+        // Restart the idle timer on the new clock, as of the latest event.
+        self.last_activity = Mark::new(self.now, wall());
+        self.wall = wall;
     }
 
     /// What Lockery has on the clipboard, for the panic and signal handlers.
@@ -460,7 +476,7 @@ impl App {
         if key.kind != KeyEventKind::Press || self.pending.is_some() {
             return;
         }
-        self.last_activity = now;
+        self.last_activity = Mark::new(now, (self.wall)());
         self.now = now;
         let mode = self.mode();
 
@@ -484,7 +500,8 @@ impl App {
         if idle_secs == 0 || !self.is_unlocked() {
             return;
         }
-        if now.duration_since(self.last_activity) >= Duration::from_secs(idle_secs.into()) {
+        let idle = self.last_activity.elapsed(now, (self.wall)());
+        if idle >= Duration::from_secs(idle_secs.into()) {
             // Unsaved edits are lost, as with closing a laptop lid on a
             // locked screen: an unattended vault must not stay open.
             self.lock();
@@ -1480,7 +1497,7 @@ impl VaultDialog {
         if *self.form.text(RowId::RepeatPassword) != *password {
             return Err("The passwords don't match.".into());
         }
-        let weak = zxcvbn::zxcvbn(&password, &[name.as_str()]).score() < zxcvbn::Score::Three;
+        let weak = Strength::of(&password, &[name.as_str()]).is_weak();
         if weak && !self.weak_ok {
             self.weak_ok = true;
             return Err(

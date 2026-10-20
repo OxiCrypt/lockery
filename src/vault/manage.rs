@@ -31,11 +31,30 @@ pub fn rename_vault(dir: &Path, from: &VaultName, to: &VaultName) -> Result<()> 
     // Hold both locks, so nobody opens either name halfway through.
     let from_file = VaultFile::open(&from_path)?;
     let to_file = VaultFile::open(&to_path)?;
+    // Check again now that we hold the lock: a vault created under `to`
+    // since the check above would otherwise be silently replaced by the
+    // rename. (Creating a vault holds its lock, so this check is final.)
+    if to_file.exists() {
+        return Err(Error::VaultExists(to_path));
+    }
 
     fs::rename(&from_path, &to_path)?;
     let from_bak = from_file.backup_path();
     if from_bak.is_file() {
         fs::rename(&from_bak, to_file.backup_path())?;
+    }
+    // Damaged copies kept by recovery move too, so they stay with their
+    // vault (and are removed if it's deleted).
+    let from_corrupt = corrupt_prefix(from);
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if let Some(suffix) = name.to_string_lossy().strip_prefix(&from_corrupt) {
+            fs::rename(
+                entry.path(),
+                dir.join(format!("{}{suffix}", corrupt_prefix(to))),
+            )?;
+        }
     }
     sync_dir(dir)?;
 
@@ -75,7 +94,7 @@ pub fn delete_vault(dir: &Path, name: &VaultName, password: &[u8]) -> Result<()>
 /// The vault file, its backup and any `.corrupt-*` copies.
 fn vault_files(dir: &Path, name: &VaultName) -> Result<Vec<PathBuf>> {
     let file_name = name.file_name();
-    let corrupt_prefix = format!("{file_name}.corrupt-");
+    let corrupt_prefix = corrupt_prefix(name);
     let mut files = vec![dir.join(&file_name), dir.join(format!("{file_name}.bak"))];
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
@@ -88,6 +107,12 @@ fn vault_files(dir: &Path, name: &VaultName) -> Result<Vec<PathBuf>> {
         }
     }
     Ok(files)
+}
+
+/// File-name prefix of the damaged copies `Vault::unlock` keeps for `name`
+/// (`<name>.lockery.corrupt-<timestamp>`).
+fn corrupt_prefix(name: &VaultName) -> String {
+    format!("{}.corrupt-", name.file_name())
 }
 
 fn lock_path(vault: &Path) -> PathBuf {
@@ -144,14 +169,20 @@ mod tests {
     }
 
     #[test]
-    fn rename_moves_vault_and_backup() {
+    fn rename_moves_vault_backup_and_damaged_copies() {
         let dir = tempfile::tempdir().unwrap();
         make_vault(dir.path(), "old");
+        fs::write(dir.path().join("old.lockery.corrupt-123"), b"x").unwrap();
         rename_vault(dir.path(), &name("old"), &name("new")).unwrap();
 
         assert_eq!(
             files(dir.path()),
-            ["new.lockery", "new.lockery.bak", "new.lockery.lock"]
+            [
+                "new.lockery",
+                "new.lockery.bak",
+                "new.lockery.corrupt-123",
+                "new.lockery.lock"
+            ]
         );
         let v = Vault::unlock(name("new").path_in(dir.path()), PW).unwrap();
         assert_eq!(v.entries()[0].title, "kept");
