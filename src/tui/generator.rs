@@ -172,7 +172,8 @@ impl GeneratorState {
     }
 }
 
-fn capitalise(s: &str) -> String {
+/// `s` with its first letter in upper case.
+pub(super) fn capitalise(s: &str) -> String {
     let mut chars = s.chars();
     chars
         .next()

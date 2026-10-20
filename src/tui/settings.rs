@@ -6,22 +6,16 @@
 
 use zeroize::Zeroizing;
 
-use super::form::{Form, Row, RowId};
+use super::form::{Form, Row, RowId, WeakPasswordCheck};
 use crate::crypto::{CipherId, KdfParams};
-use crate::generator::Strength;
 use crate::vault::Vault;
-
-/// Cipher options, in [`CipherId::ALL`] order.
-const CIPHERS: &[&str] = &["XChaCha20-Poly1305", "AES-256-GCM"];
 
 const MIB: u32 = 1024;
 
 pub struct SettingsState {
     pub form: Form,
     pub error: Option<String>,
-    /// The new password was reported as weak and Enter/Ctrl-s pressed
-    /// again; any further edit resets this.
-    weak_ok: bool,
+    weak: WeakPasswordCheck,
 }
 
 /// What applying the settings will do.
@@ -64,7 +58,7 @@ impl SettingsState {
             .position(|&c| c == vault.cipher())
             .unwrap_or(0);
         let rows = vec![
-            Row::choice(RowId::Cipher, "Cipher", CIPHERS, cipher),
+            Row::choice(RowId::Cipher, "Cipher", &CipherId::NAMES, cipher),
             Row::number(
                 RowId::MemoryMib,
                 "Memory (MiB)",
@@ -99,7 +93,7 @@ impl SettingsState {
         Self {
             form: Form::new(rows),
             error: None,
-            weak_ok: false,
+            weak: WeakPasswordCheck::default(),
         }
     }
 
@@ -115,7 +109,7 @@ impl SettingsState {
     /// Something was typed or toggled: clear stale messages.
     pub fn on_change(&mut self) {
         self.error = None;
-        self.weak_ok = false;
+        self.weak.reset();
     }
 
     /// The Argon2 parameters currently in the form.
@@ -150,14 +144,14 @@ impl SettingsState {
         if *self.form.text(RowId::RepeatPassword) != *self.form.text(RowId::NewPassword) {
             return Err("The new passwords don't match.".into());
         }
-        if let Some(new) = &change.new_password
-            && Strength::of(new, &[]).score < 3
-            && !self.weak_ok
-        {
-            self.weak_ok = true;
-            return Err(
-                "The new password is easy to guess. Press Ctrl-s again to use it anyway.".into(),
-            );
+        if let Some(new) = &change.new_password {
+            // Judged against the vault's name, as when creating a vault.
+            let name = vault.path().file_stem().and_then(|s| s.to_str());
+            self.weak.check(
+                new,
+                name.as_slice(),
+                "The new password is easy to guess. Press Ctrl-s again to use it anyway.",
+            )?;
         }
         Ok(change)
     }

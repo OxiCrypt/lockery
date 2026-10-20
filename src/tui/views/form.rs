@@ -24,6 +24,20 @@ fn height(row: &Row) -> u16 {
     }
 }
 
+/// `‹ value ›`, for the widgets that ←/→ step through (choices, numbers).
+fn stepper(value: String, focused: bool) -> Line<'static> {
+    let style = if focused {
+        theme::SELECTED
+    } else {
+        theme::HINT
+    };
+    Line::from(vec![
+        Span::styled("‹ ", theme::DIM),
+        Span::styled(value, style),
+        Span::styled(" ›", theme::DIM),
+    ])
+}
+
 /// Draw the visible rows of `form` into `area`, with labels `label_width`
 /// columns wide.
 pub fn render(form: &Form, frame: &mut Frame<'_>, area: Rect, label_width: u16) {
@@ -78,34 +92,10 @@ pub fn render(form: &Form, frame: &mut Frame<'_>, area: Rect, label_width: u16) 
                 frame.render_widget(Line::raw(text), value_area);
             }
             Widget::Choice { options, selected } => {
-                let style = if focused {
-                    theme::SELECTED
-                } else {
-                    theme::HINT
-                };
-                frame.render_widget(
-                    Line::from(vec![
-                        Span::styled("‹ ", theme::DIM),
-                        Span::styled(options[*selected], style),
-                        Span::styled(" ›", theme::DIM),
-                    ]),
-                    value_area,
-                );
+                frame.render_widget(stepper(options[*selected].into(), focused), value_area);
             }
             Widget::Number { value, .. } => {
-                let style = if focused {
-                    theme::SELECTED
-                } else {
-                    theme::HINT
-                };
-                frame.render_widget(
-                    Line::from(vec![
-                        Span::styled("‹ ", theme::DIM),
-                        Span::styled(value.to_string(), style),
-                        Span::styled(" ›", theme::DIM),
-                    ]),
-                    value_area,
-                );
+                frame.render_widget(stepper(value.to_string(), focused), value_area);
             }
             Widget::Button => {
                 // Buttons span the whole row; the label is the button text.

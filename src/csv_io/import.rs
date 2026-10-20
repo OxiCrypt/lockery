@@ -290,8 +290,8 @@ impl Row<'_> {
             .unwrap_or(group)
             .trim_start_matches('/');
         e.tags = non_empty(group);
-        let created = parse_time(self.get("created"), warnings, line);
-        let modified = parse_time(self.get("last modified"), warnings, line);
+        let created = parse_date(self.get("created"), rfc3339, warnings, line);
+        let modified = parse_date(self.get("last modified"), rfc3339, warnings, line);
         set_times(&mut e, created, modified);
         e
     }
@@ -316,8 +316,8 @@ impl Row<'_> {
                 });
             }
         }
-        let created = parse_millis(self.get("timecreated"), warnings, line);
-        let modified = parse_millis(self.get("timepasswordchanged"), warnings, line);
+        let created = parse_date(self.get("timecreated"), millis, warnings, line);
+        let modified = parse_date(self.get("timepasswordchanged"), millis, warnings, line);
         set_times(&mut e, created, modified);
         e
     }
@@ -362,30 +362,28 @@ fn host(url: &str) -> Option<String> {
 }
 
 /// An RFC 3339 timestamp such as `2024-03-01T10:00:00Z`.
-fn parse_time(s: &str, warnings: &mut Vec<String>, line: u64) -> Option<Timestamp> {
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
-    let parsed = Timestamp::from_str(s).ok();
-    if parsed.is_none() {
-        warnings.push(format!(
-            "Line {line}: couldn't read the date “{s}”; using today instead."
-        ));
-    }
-    parsed
+fn rfc3339(s: &str) -> Option<Timestamp> {
+    Timestamp::from_str(s).ok()
 }
 
 /// Milliseconds since 1970, as Firefox writes them.
-fn parse_millis(s: &str, warnings: &mut Vec<String>, line: u64) -> Option<Timestamp> {
+fn millis(s: &str) -> Option<Timestamp> {
+    Timestamp::from_millisecond(s.parse().ok()?).ok()
+}
+
+/// A date column read with `parse`. Empty means no date; one that can't be
+/// read adds a warning and is also treated as no date.
+fn parse_date(
+    s: &str,
+    parse: fn(&str) -> Option<Timestamp>,
+    warnings: &mut Vec<String>,
+    line: u64,
+) -> Option<Timestamp> {
     let s = s.trim();
     if s.is_empty() {
         return None;
     }
-    let parsed = s
-        .parse::<i64>()
-        .ok()
-        .and_then(|ms| Timestamp::from_millisecond(ms).ok());
+    let parsed = parse(s);
     if parsed.is_none() {
         warnings.push(format!(
             "Line {line}: couldn't read the date “{s}”; using today instead."

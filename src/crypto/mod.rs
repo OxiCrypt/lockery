@@ -50,6 +50,18 @@ impl CipherId {
     /// Every supported cipher, handy for tests and settings menus.
     pub const ALL: [Self; 2] = [Self::XChaCha20Poly1305, Self::Aes256Gcm];
 
+    /// [`name`](Self::name) of each of [`ALL`](Self::ALL), in that order:
+    /// the options of a cipher menu, whose index maps back into `ALL`.
+    pub const NAMES: [&'static str; Self::ALL.len()] = {
+        let mut names = [""; Self::ALL.len()];
+        let mut i = 0;
+        while i < names.len() {
+            names[i] = Self::ALL[i].name();
+            i += 1;
+        }
+        names
+    };
+
     /// The on-disk identifier.
     #[must_use]
     pub const fn id(self) -> u8 {

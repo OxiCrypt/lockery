@@ -4,8 +4,9 @@
 //! widget: a text field (single- or multi-line, optionally secret), an
 //! on/off toggle, a choice between a few options, or a button.
 //!
-//! Focus moves with Tab / Shift-Tab (handled by the app through the
-//! keymap); every other key goes to the focused row via [`Form::input`].
+//! Focus moves with Tab / Shift-Tab, which the keymap turns into actions
+//! for [`Form::navigate`]; every other key goes to the focused row via
+//! [`Form::input`].
 //!
 //! Text fields wrap `ratatui_textarea::TextArea`, which stores plain
 //! `String`s. [`TextField`] wipes them when dropped, and secret fields keep
@@ -17,7 +18,9 @@ use ratatui::style::Style;
 use ratatui_textarea::{CursorMove, TextArea};
 use zeroize::{Zeroize, Zeroizing};
 
+use super::keymap::Action;
 use super::theme;
+use crate::generator::Strength;
 
 /// Character shown instead of each character of a masked secret.
 const MASK_CHAR: char = '•';
@@ -290,8 +293,6 @@ pub enum FormEvent {
     None,
     /// The value of this row changed.
     Changed(RowId),
-    /// Enter in a single-line field: move to the next field.
-    Next,
     /// A button was pressed.
     Activated(RowId),
 }
@@ -374,6 +375,17 @@ impl Form {
         self.restyle();
     }
 
+    /// Handle the keys every form shares: next/previous field and showing
+    /// secrets. Other actions are left to the caller and ignored here.
+    pub fn navigate(&mut self, action: Action) {
+        match action {
+            Action::NextField => self.focus_next(),
+            Action::PrevField => self.focus_prev(),
+            Action::ToggleRevealInput => self.toggle_reveal(),
+            _ => {}
+        }
+    }
+
     /// Feed a key that the keymap didn't claim to the focused row.
     pub fn input(&mut self, key: KeyEvent) -> FormEvent {
         let Some(row) = self.rows.get_mut(self.focus) else {
@@ -381,16 +393,18 @@ impl Form {
         };
         let id = row.id;
         let plain = (key.modifiers - KeyModifiers::SHIFT).is_empty();
+        // Keys that would start a new line: in a single-line field they move
+        // on to the next field instead.
+        let newline = key.code == KeyCode::Enter
+            || (key.modifiers == KeyModifiers::CONTROL
+                && matches!(key.code, KeyCode::Char('m' | 'j')));
         let event = match &mut row.widget {
+            Widget::Text(field) if newline && !field.is_multiline() => {
+                self.focus_next();
+                return FormEvent::None;
+            }
             Widget::Text(field) => {
-                // Keys that would start a new line: in a single-line field
-                // they move on to the next field instead.
-                let newline = key.code == KeyCode::Enter
-                    || (key.modifiers == KeyModifiers::CONTROL
-                        && matches!(key.code, KeyCode::Char('m' | 'j')));
-                if newline && !field.is_multiline() {
-                    FormEvent::Next
-                } else if field.input(key) {
+                if field.input(key) {
                     FormEvent::Changed(id)
                 } else {
                     FormEvent::None
@@ -537,6 +551,35 @@ impl Form {
     }
 }
 
+/// Refuses a weak new password once, with a warning, then lets it through
+/// if the user submits again without editing in between ("press Enter
+/// again to use it anyway"). Shared by the vault dialog and the settings.
+#[derive(Debug, Default)]
+pub struct WeakPasswordCheck {
+    warned: bool,
+}
+
+impl WeakPasswordCheck {
+    /// `Ok` if `password` is strong (judged against `hints` such as the
+    /// vault name) or the user was already warned; otherwise `warning`.
+    ///
+    /// # Errors
+    /// `warning`, the first time a weak password is submitted.
+    pub fn check(&mut self, password: &str, hints: &[&str], warning: &str) -> Result<(), String> {
+        // Once warned, skip zxcvbn: it makes copies of the password.
+        if self.warned || !Strength::of(password, hints).is_weak() {
+            return Ok(());
+        }
+        self.warned = true;
+        Err(warning.to_owned())
+    }
+
+    /// The form was edited: warn again on the next submit.
+    pub fn reset(&mut self) {
+        self.warned = false;
+    }
+}
+
 /// How a key changes a number field. ←/→ and -/+ step by one, clamped to
 /// `min..=max`. Digits type a value: each one is appended, and if that goes
 /// past `max` typing starts over, so "32" can be typed over "24". A typed
@@ -614,13 +657,34 @@ mod tests {
     #[test]
     fn enter_moves_on_in_single_line_fields_but_not_multiline() {
         let mut form = sample();
-        assert_eq!(form.input(key(KeyCode::Enter)), FormEvent::Next);
+        assert_eq!(form.input(key(KeyCode::Enter)), FormEvent::None);
+        assert_eq!(form.focused_id(), Some(RowId::Password));
 
         // Multi-line fields start with the cursor at the top-left.
         form.focus_row(RowId::Notes);
         type_text(&mut form, "c");
         form.input(key(KeyCode::Enter));
         assert_eq!(form.text(RowId::Notes).as_str(), "c\na\nb");
+    }
+
+    #[test]
+    fn weak_passwords_are_refused_once_until_the_form_changes() {
+        let mut weak = WeakPasswordCheck::default();
+        assert!(weak.check("correct horse battery staple", &[], "w").is_ok());
+        assert_eq!(weak.check("password1", &[], "w"), Err("w".into()));
+        assert!(weak.check("password1", &[], "w").is_ok(), "insisting works");
+        weak.reset();
+        assert!(
+            weak.check("password1", &[], "w").is_err(),
+            "an edit re-arms it"
+        );
+
+        // Hints count against the password: a strong-looking one built
+        // from the vault's name is weak for that vault.
+        let mut weak = WeakPasswordCheck::default();
+        assert!(weak.check("Zq8vTn3wLkp", &[], "w").is_ok());
+        let mut weak = WeakPasswordCheck::default();
+        assert!(weak.check("Zq8vTn3wLkp", &["Zq8vTn3wLkp"], "w").is_err());
     }
 
     #[test]

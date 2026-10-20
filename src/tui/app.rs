@@ -35,8 +35,8 @@ use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::entry_form;
-use super::form::{Form, FormEvent, Row, RowId};
-use super::generator::{GeneratorState, GeneratorTarget};
+use super::form::{Form, FormEvent, Row, RowId, WeakPasswordCheck};
+use super::generator::{GeneratorState, GeneratorTarget, capitalise};
 use super::keymap::{self, Action, Mode};
 use super::search::Search;
 use super::settings::SettingsState;
@@ -91,6 +91,16 @@ pub enum NewVaultKdf {
     Calibrate,
     /// Use these parameters (tests use this to stay fast).
     Fixed(KdfParams),
+}
+
+impl NewVaultKdf {
+    /// The parameters to use, calibrating now if that's the setting.
+    fn params(self) -> crate::error::Result<KdfParams> {
+        match self {
+            Self::Fixed(params) => Ok(params),
+            Self::Calibrate => calibrate::calibrate(DEFAULT_TARGET),
+        }
+    }
 }
 
 /// Slow work waiting to run after the next frame is drawn.
@@ -165,9 +175,7 @@ pub(super) struct VaultDialog {
     pub kind: DialogKind,
     pub form: Form,
     pub error: Option<String>,
-    /// The user was warned that the new password is weak and pressed Enter
-    /// again; any further edit resets this.
-    weak_ok: bool,
+    weak: WeakPasswordCheck,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -180,9 +188,6 @@ pub(super) enum DialogKind {
     /// Over an unlocked vault: write a CSV file (suggested path).
     Export(String),
 }
-
-/// Cipher options in the "new vault" dialog, matching [`CipherId::ALL`].
-const CIPHERS: &[&str] = &["XChaCha20-Poly1305", "AES-256-GCM"];
 
 pub(super) struct UnlockState {
     pub target: VaultTarget,
@@ -547,18 +552,14 @@ impl App {
                 let Some(generator) = &mut u.generator else {
                     return;
                 };
-                match generator.form.input(key) {
-                    FormEvent::Next => generator.form.focus_next(),
-                    FormEvent::Changed(id) => generator.on_change(id),
-                    FormEvent::Activated(_) | FormEvent::None => {}
+                if let FormEvent::Changed(id) = generator.form.input(key) {
+                    generator.on_change(id);
                 }
             }
             Screen::Unlocked(u) if u.dialog.is_some() => {
                 let Some(d) = &mut u.dialog else { return };
-                match d.form.input(key) {
-                    FormEvent::Next => d.form.focus_next(),
-                    FormEvent::Changed(_) => d.error = None,
-                    FormEvent::Activated(_) | FormEvent::None => {}
+                if let FormEvent::Changed(_) = d.form.input(key) {
+                    d.error = None;
                 }
             }
             Screen::Unlocked(u) if u.settings.is_some() => {
@@ -566,7 +567,6 @@ impl App {
                     return;
                 };
                 match settings.form.input(key) {
-                    FormEvent::Next => settings.form.focus_next(),
                     FormEvent::Changed(_) => settings.on_change(),
                     FormEvent::Activated(RowId::Calibrate) => {
                         self.pending = Some(Pending::Calibrate);
@@ -577,7 +577,6 @@ impl App {
             Screen::Unlocked(u) if u.editor.is_some() => {
                 let Some(editor) = &mut u.editor else { return };
                 match editor.form.input(key) {
-                    FormEvent::Next => editor.form.focus_next(),
                     FormEvent::Changed(id) => {
                         entry_form::on_change(&mut editor.form, id);
                         // Any of password, title, username or type matters.
@@ -597,14 +596,12 @@ impl App {
             }
             Screen::Picker(PickerState {
                 dialog: Some(d), ..
-            }) => match d.form.input(key) {
-                FormEvent::Next => d.form.focus_next(),
-                FormEvent::Changed(_) => {
+            }) => {
+                if let FormEvent::Changed(_) = d.form.input(key) {
                     d.error = None;
-                    d.weak_ok = false;
+                    d.weak.reset();
                 }
-                FormEvent::Activated(_) | FormEvent::None => {}
-            },
+            }
             _ => {}
         }
     }
@@ -618,12 +615,9 @@ impl App {
 
         if let Some(dialog) = &mut p.dialog {
             match action {
-                Action::NextField => dialog.form.focus_next(),
-                Action::PrevField => dialog.form.focus_prev(),
-                Action::ToggleRevealInput => dialog.form.toggle_reveal(),
                 Action::Cancel => p.dialog = None,
                 Action::Submit => self.submit_dialog(),
-                _ => {}
+                _ => dialog.form.navigate(action),
             }
             return;
         }
@@ -669,21 +663,14 @@ impl App {
             DialogKind::Delete(name) => d
                 .validate_delete(&name)
                 .map(|()| Some(Pending::DeleteVault)),
-            DialogKind::Rename(old) => d.validate_rename(&old).map(|new| {
+            DialogKind::Rename(old) => d.validate_rename().map(|new| {
                 self.rename_vault(&old, &new);
                 None
             }),
         };
         match result {
             Ok(pending) => self.pending = pending,
-            Err(message) => {
-                if let Screen::Picker(PickerState {
-                    dialog: Some(d), ..
-                }) = &mut self.screen
-                {
-                    d.error = Some(message);
-                }
-            }
+            Err(message) => self.dialog_error(message),
         }
     }
 
@@ -713,6 +700,14 @@ impl App {
     fn close_dialog(&mut self) {
         if let Screen::Picker(p) = &mut self.screen {
             p.dialog = None;
+        }
+    }
+
+    /// The open dialog over the picker, if any.
+    fn picker_dialog(&self) -> Option<&VaultDialog> {
+        match &self.screen {
+            Screen::Picker(p) => p.dialog.as_ref(),
+            _ => None,
         }
     }
 
@@ -831,8 +826,6 @@ impl App {
             return;
         };
         match action {
-            Action::NextField => generator.form.focus_next(),
-            Action::PrevField => generator.form.focus_prev(),
             Action::Regenerate => generator.regenerate(),
             Action::UseGenerated => self.use_generated(),
             Action::Cancel => {
@@ -840,7 +833,7 @@ impl App {
                 self.gen_passphrase = generator.form.choice(RowId::GenKind) == 1;
                 u.generator = None;
             }
-            _ => {}
+            _ => generator.form.navigate(action),
         }
     }
 
@@ -911,14 +904,12 @@ impl App {
         match self.clipboard.copy(value, what, self.now) {
             Ok(()) => {
                 let secs = self.config.clipboard_clear_secs;
-                let mut first = what.chars();
-                let what = first
-                    .next()
-                    .map(|c| c.to_uppercase().chain(first).collect::<String>())
-                    .unwrap_or_default();
                 self.set_status(
                     StatusKind::Info,
-                    format!("{what} copied. The clipboard clears in {secs} s."),
+                    format!(
+                        "{} copied. The clipboard clears in {secs} s.",
+                        capitalise(what)
+                    ),
                 );
             }
             Err(e) => self.set_status(StatusKind::Error, format!("Couldn't copy: {e}")),
@@ -932,9 +923,6 @@ impl App {
         };
         let Some(dialog) = &mut u.dialog else { return };
         match action {
-            Action::NextField => dialog.form.focus_next(),
-            Action::PrevField => dialog.form.focus_prev(),
-            Action::ToggleRevealInput => dialog.form.toggle_reveal(),
             Action::Cancel => u.dialog = None,
             Action::Submit => {
                 let path_text = dialog.form.text(RowId::FilePath);
@@ -967,7 +955,7 @@ impl App {
                     _ => {}
                 }
             }
-            _ => {}
+            _ => dialog.form.navigate(action),
         }
     }
 
@@ -1021,9 +1009,6 @@ impl App {
             return;
         };
         match action {
-            Action::NextField => settings.form.focus_next(),
-            Action::PrevField => settings.form.focus_prev(),
-            Action::ToggleRevealInput => settings.form.toggle_reveal(),
             Action::Save => match settings.validate(&u.vault) {
                 Ok(_) => self.pending = Some(Pending::Rekey),
                 Err(message) => settings.error = Some(message),
@@ -1035,7 +1020,7 @@ impl App {
                 });
             }
             Action::Cancel => u.settings = None,
-            _ => {}
+            _ => settings.form.navigate(action),
         }
     }
 
@@ -1053,9 +1038,6 @@ impl App {
                     self.gen_passphrase,
                 ));
             }
-            Action::NextField => editor.form.focus_next(),
-            Action::PrevField => editor.form.focus_prev(),
-            Action::ToggleRevealInput => editor.form.toggle_reveal(),
             Action::Save => self.save_entry(),
             Action::Cancel if editor.form.dirty => {
                 self.confirm = Some(Confirm {
@@ -1064,7 +1046,7 @@ impl App {
                 });
             }
             Action::Cancel => u.editor = None,
-            _ => {}
+            _ => editor.form.navigate(action),
         }
     }
 
@@ -1234,10 +1216,7 @@ impl App {
     }
 
     fn finish_create_vault(&mut self) {
-        let Screen::Picker(PickerState {
-            dialog: Some(d), ..
-        }) = &self.screen
-        else {
+        let Some(d) = self.picker_dialog() else {
             return;
         };
         // Already validated by `validate_create`.
@@ -1247,12 +1226,8 @@ impl App {
         let password = d.form.text(RowId::NewPassword);
         let cipher = CipherId::ALL[d.form.choice(RowId::Cipher)];
 
-        let kdf = match self.new_vault_kdf {
-            NewVaultKdf::Fixed(params) => Ok(params),
-            NewVaultKdf::Calibrate => calibrate::calibrate(DEFAULT_TARGET),
-        };
         let target = VaultTarget::named(&name, &self.data_dir);
-        let created = kdf.and_then(|kdf| {
+        let created = self.new_vault_kdf.params().and_then(|kdf| {
             paths::ensure_dir(&self.data_dir)?;
             Vault::create(&target.path, password.as_bytes(), kdf, cipher)
         });
@@ -1270,10 +1245,7 @@ impl App {
     }
 
     fn finish_delete_vault(&mut self) {
-        let Screen::Picker(PickerState {
-            dialog: Some(d), ..
-        }) = &self.screen
-        else {
+        let Some(d) = self.picker_dialog() else {
             return;
         };
         let DialogKind::Delete(name) = d.kind.clone() else {
@@ -1326,10 +1298,7 @@ impl App {
     }
 
     fn finish_calibrate(&mut self) {
-        let kdf = match self.new_vault_kdf {
-            NewVaultKdf::Fixed(params) => Ok(params),
-            NewVaultKdf::Calibrate => calibrate::calibrate(DEFAULT_TARGET),
-        };
+        let kdf = self.new_vault_kdf.params();
         let Screen::Unlocked(u) = &mut self.screen else {
             return;
         };
@@ -1458,7 +1427,7 @@ impl VaultDialog {
                 Row::text(RowId::VaultName, "Name", "").with_placeholder("letters, digits, - or _"),
                 Row::secret(RowId::NewPassword, "Master password", ""),
                 Row::secret(RowId::RepeatPassword, "Repeat password", ""),
-                Row::choice(RowId::Cipher, "Cipher", CIPHERS, 0),
+                Row::choice(RowId::Cipher, "Cipher", &CipherId::NAMES, 0),
             ],
             DialogKind::Rename(name) => {
                 vec![Row::text(RowId::VaultName, "New name", name.as_str())]
@@ -1480,7 +1449,7 @@ impl VaultDialog {
             kind,
             form: Form::new(rows),
             error: None,
-            weak_ok: false,
+            weak: WeakPasswordCheck::default(),
         }
     }
 
@@ -1497,17 +1466,14 @@ impl VaultDialog {
         if *self.form.text(RowId::RepeatPassword) != *password {
             return Err("The passwords don't match.".into());
         }
-        let weak = Strength::of(&password, &[name.as_str()]).is_weak();
-        if weak && !self.weak_ok {
-            self.weak_ok = true;
-            return Err(
-                "That password is easy to guess. Press Enter again to use it anyway.".into(),
-            );
-        }
-        Ok(())
+        self.weak.check(
+            &password,
+            &[name.as_str()],
+            "That password is easy to guess. Press Enter again to use it anyway.",
+        )
     }
 
-    fn validate_rename(&self, _old: &VaultName) -> Result<VaultName, String> {
+    fn validate_rename(&self) -> Result<VaultName, String> {
         let raw_name = self.form.text(RowId::VaultName);
         VaultName::parse(raw_name.trim()).map_err(|e| e.to_string())
     }

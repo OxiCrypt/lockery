@@ -211,538 +211,166 @@ pub struct Binding {
     pub short: Option<&'static str>,
 }
 
+/// A binding hinted in the footer and the help overlay; chain
+/// [`Binding::help`], [`Binding::hidden`] or [`Binding::short`] to change
+/// that. Keeps each row of [`BINDINGS`] to about one line.
+const fn bind(
+    keys: &'static [Key],
+    label: &'static str,
+    description: &'static str,
+    action: Action,
+    modes: &'static [Mode],
+) -> Binding {
+    Binding {
+        keys,
+        label,
+        description,
+        action,
+        modes,
+        show: Show::Footer,
+        short: None,
+    }
+}
+
+impl Binding {
+    /// Hint only in the help overlay.
+    const fn help(mut self) -> Self {
+        self.show = Show::Help;
+        self
+    }
+
+    /// Hint nowhere (an alias described by another row).
+    const fn hidden(mut self) -> Self {
+        self.show = Show::Hidden;
+        self
+    }
+
+    /// Use `short` as the footer description.
+    const fn short(mut self, short: &'static str) -> Self {
+        self.short = Some(short);
+        self
+    }
+}
+
+use KeyCode::{
+    BackTab, Backspace, Down, End, Enter, Esc, F, Home, Left, PageDown, PageUp, Right, Tab, Up,
+};
 use Mode::{
     Confirm, Detail, Dialog, Edit, Generator, Help, List, Picker, Preview, Search, Settings, Unlock,
 };
-use Show::{Footer, Hidden};
 
 /// All key bindings. Order matters: it is the order of the hints, so the
 /// most useful keys come first (the footer drops hints that don't fit, but
 /// always keeps room for the Help hint).
+// One binding per line reads as a table; rustfmt would spread each call
+// over seven lines.
+#[rustfmt::skip]
 pub static BINDINGS: &[Binding] = &[
     // -- Moving around --------------------------------------------------------
-    Binding {
-        keys: &[Key::plain(KeyCode::Up), Key::char('k')],
-        label: "↑↓/jk",
-        description: "Move",
-        action: Action::Up,
-        modes: &[Picker],
-        show: Footer,
-        short: None,
-    },
+    bind(&[Key::plain(Up), Key::char('k')], "↑↓/jk", "Move", Action::Up, &[Picker]),
     // In the list the highlight makes movement obvious, so the footer's room
     // goes to the entry commands instead.
-    Binding {
-        keys: &[Key::plain(KeyCode::Up), Key::char('k')],
-        label: "↑↓/jk",
-        description: "Move",
-        action: Action::Up,
-        modes: &[List],
-        show: Show::Help,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Down), Key::char('j')],
-        label: "↓/j",
-        description: "Move down",
-        action: Action::Down,
-        modes: &[Picker, List],
-        show: Hidden,
-        short: None,
-    },
+    bind(&[Key::plain(Up), Key::char('k')], "↑↓/jk", "Move", Action::Up, &[List]).help(),
+    bind(&[Key::plain(Down), Key::char('j')], "↓/j", "Move down", Action::Down, &[Picker, List]).hidden(),
     // While searching, j and k must be typeable, so only the arrows move.
-    Binding {
-        keys: &[Key::plain(KeyCode::Up)],
-        label: "↑↓",
-        description: "Move",
-        action: Action::Up,
-        modes: &[Search, Preview],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Down)],
-        label: "↓",
-        description: "Move down",
-        action: Action::Down,
-        modes: &[Search, Preview],
-        show: Hidden,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::PageUp)],
-        label: "PgUp/PgDn",
-        description: "Page up/down",
-        action: Action::PageUp,
-        modes: &[List, Search],
-        show: Show::Help,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::PageDown)],
-        label: "PgDn",
-        description: "Page down",
-        action: Action::PageDown,
-        modes: &[List, Search],
-        show: Hidden,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Home)],
-        label: "Home/End",
-        description: "First/last",
-        action: Action::Top,
-        modes: &[Picker, List],
-        show: Show::Help,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::End), Key::char('G')],
-        label: "G",
-        description: "Last",
-        action: Action::Bottom,
-        modes: &[Picker, List],
-        show: Hidden,
-        short: None,
-    },
+    bind(&[Key::plain(Up)], "↑↓", "Move", Action::Up, &[Search, Preview]),
+    bind(&[Key::plain(Down)], "↓", "Move down", Action::Down, &[Search, Preview]).hidden(),
+    bind(&[Key::plain(PageUp)], "PgUp/PgDn", "Page up/down", Action::PageUp, &[List, Search]).help(),
+    bind(&[Key::plain(PageDown)], "PgDn", "Page down", Action::PageDown, &[List, Search]).hidden(),
+    bind(&[Key::plain(Home)], "Home/End", "First/last", Action::Top, &[Picker, List]).help(),
+    bind(&[Key::plain(End), Key::char('G')], "G", "Last", Action::Bottom, &[Picker, List]).hidden(),
     // -- Opening, submitting and going back -----------------------------------
-    Binding {
-        keys: &[
-            Key::plain(KeyCode::Enter),
-            Key::char('l'),
-            Key::plain(KeyCode::Right),
-        ],
-        label: "Enter",
-        description: "Open",
-        action: Action::Open,
-        modes: &[Picker, List],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Enter)],
-        label: "Enter",
-        description: "Unlock",
-        action: Action::Submit,
-        modes: &[Unlock],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Enter)],
-        label: "Enter",
-        description: "Confirm",
-        action: Action::Submit,
-        modes: &[Dialog],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Enter)],
-        label: "Enter",
-        description: "Import",
-        action: Action::Submit,
-        modes: &[Preview],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::char(' ')],
-        label: "Space",
-        description: "Include duplicates",
-        action: Action::ToggleDuplicates,
-        modes: &[Preview],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Backspace)],
-        label: "Bksp",
-        description: "Delete character",
-        action: Action::Backspace,
-        modes: &[Unlock, Search],
-        show: Hidden,
-        short: None,
-    },
-    Binding {
-        keys: &[
-            Key::plain(KeyCode::Esc),
-            Key::char('h'),
-            Key::plain(KeyCode::Left),
-        ],
-        label: "Esc",
-        description: "Back",
-        action: Action::Back,
-        modes: &[Detail],
-        show: Footer,
-        short: None,
-    },
+    bind(
+        &[Key::plain(Enter), Key::char('l'), Key::plain(Right)],
+        "Enter",
+        "Open",
+        Action::Open,
+        &[Picker, List],
+    ),
+    bind(&[Key::plain(Enter)], "Enter", "Unlock", Action::Submit, &[Unlock]),
+    bind(&[Key::plain(Enter)], "Enter", "Confirm", Action::Submit, &[Dialog]),
+    bind(&[Key::plain(Enter)], "Enter", "Import", Action::Submit, &[Preview]),
+    bind(&[Key::char(' ')], "Space", "Include duplicates", Action::ToggleDuplicates, &[Preview]),
+    bind(&[Key::plain(Backspace)], "Bksp", "Delete character", Action::Backspace, &[Unlock, Search]).hidden(),
+    bind(
+        &[Key::plain(Esc), Key::char('h'), Key::plain(Left)],
+        "Esc",
+        "Back",
+        Action::Back,
+        &[Detail],
+    ),
     // -- Copying --------------------------------------------------------------
-    Binding {
-        keys: &[Key::char('c')],
-        label: "c",
-        description: "Copy password",
-        action: Action::CopyPassword,
-        modes: &[List, Detail],
-        show: Footer,
-        short: Some("Copy"),
-    },
-    Binding {
-        keys: &[Key::char('u')],
-        label: "u",
-        description: "Copy username",
-        action: Action::CopyUsername,
-        modes: &[Detail],
-        show: Footer,
-        short: Some("User"),
-    },
+    bind(&[Key::char('c')], "c", "Copy password", Action::CopyPassword, &[List, Detail]).short("Copy"),
+    bind(&[Key::char('u')], "u", "Copy username", Action::CopyUsername, &[Detail]).short("User"),
     // No footer room in the list view; listed in its help overlay.
-    Binding {
-        keys: &[Key::char('u')],
-        label: "u",
-        description: "Copy username",
-        action: Action::CopyUsername,
-        modes: &[List],
-        show: Show::Help,
-        short: None,
-    },
+    bind(&[Key::char('u')], "u", "Copy username", Action::CopyUsername, &[List]).help(),
     // -- Forms ----------------------------------------------------------------
-    Binding {
-        keys: &[Key::plain(KeyCode::Tab)],
-        label: "Tab",
-        description: "Next",
-        action: Action::NextField,
-        modes: &[Edit, Dialog, Generator, Settings],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::BackTab)],
-        label: "Shift-Tab",
-        description: "Back",
-        action: Action::PrevField,
-        modes: &[Edit, Dialog, Generator, Settings],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::ctrl('s')],
-        label: "Ctrl-s",
-        description: "Save",
-        action: Action::Save,
-        modes: &[Edit],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::ctrl('s')],
-        label: "Ctrl-s",
-        description: "Apply",
-        action: Action::Save,
-        modes: &[Settings],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::ctrl('g')],
-        label: "Ctrl-g",
-        description: "Generate",
-        action: Action::Generate,
-        modes: &[Edit],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Enter)],
-        label: "Enter",
-        description: "Use",
-        action: Action::UseGenerated,
-        modes: &[Generator],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::ctrl('g')],
-        label: "Ctrl-g",
-        description: "New",
-        action: Action::Regenerate,
-        modes: &[Generator],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Esc)],
-        label: "Esc",
-        description: "Close",
-        action: Action::Cancel,
-        modes: &[Generator],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Esc)],
-        label: "Esc",
-        description: "Cancel",
-        action: Action::Cancel,
-        modes: &[Edit, Dialog, Settings, Preview],
-        show: Footer,
-        short: None,
-    },
+    bind(&[Key::plain(Tab)], "Tab", "Next", Action::NextField, FORMS),
+    bind(&[Key::plain(BackTab)], "Shift-Tab", "Back", Action::PrevField, FORMS),
+    bind(&[Key::ctrl('s')], "Ctrl-s", "Save", Action::Save, &[Edit]),
+    bind(&[Key::ctrl('s')], "Ctrl-s", "Apply", Action::Save, &[Settings]),
+    bind(&[Key::ctrl('g')], "Ctrl-g", "Generate", Action::Generate, &[Edit]),
+    bind(&[Key::plain(Enter)], "Enter", "Use", Action::UseGenerated, &[Generator]),
+    bind(&[Key::ctrl('g')], "Ctrl-g", "New", Action::Regenerate, &[Generator]),
+    bind(&[Key::plain(Esc)], "Esc", "Close", Action::Cancel, &[Generator]),
+    bind(&[Key::plain(Esc)], "Esc", "Cancel", Action::Cancel, &[Edit, Dialog, Settings, Preview]),
     // -- Confirmations --------------------------------------------------------
-    Binding {
-        keys: &[Key::char('y')],
-        label: "y",
-        description: "Yes",
-        action: Action::Yes,
-        modes: &[Confirm],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::char('n'), Key::plain(KeyCode::Esc)],
-        label: "n/Esc",
-        description: "No",
-        action: Action::No,
-        modes: &[Confirm],
-        show: Footer,
-        short: None,
-    },
+    bind(&[Key::char('y')], "y", "Yes", Action::Yes, &[Confirm]),
+    bind(&[Key::char('n'), Key::plain(Esc)], "n/Esc", "No", Action::No, &[Confirm]),
     // -- Searching ------------------------------------------------------------
-    Binding {
-        keys: &[Key::char('/')],
-        label: "/",
-        description: "Search",
-        action: Action::Search,
-        modes: &[List],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Enter)],
-        label: "Enter",
-        description: "Done",
-        action: Action::AcceptSearch,
-        modes: &[Search],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Esc)],
-        label: "Esc",
-        description: "Clear search",
-        action: Action::ClearSearch,
-        modes: &[Search],
-        show: Footer,
-        short: None,
-    },
+    bind(&[Key::char('/')], "/", "Search", Action::Search, &[List]),
+    bind(&[Key::plain(Enter)], "Enter", "Done", Action::AcceptSearch, &[Search]),
+    bind(&[Key::plain(Esc)], "Esc", "Clear search", Action::ClearSearch, &[Search]),
     // Same key in the list, where it only matters if a filter is active, so
     // it stays out of the footer.
-    Binding {
-        keys: &[Key::plain(KeyCode::Esc)],
-        label: "Esc",
-        description: "Clear search",
-        action: Action::ClearSearch,
-        modes: &[List],
-        show: Show::Help,
-        short: None,
-    },
+    bind(&[Key::plain(Esc)], "Esc", "Clear search", Action::ClearSearch, &[List]).help(),
     // -- Entries and vaults ---------------------------------------------------
-    Binding {
-        keys: &[Key::char('n')],
-        label: "n",
-        description: "New",
-        action: Action::New,
-        modes: &[List, Picker],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::char('e')],
-        label: "e",
-        description: "Edit",
-        action: Action::Edit,
-        modes: &[List, Detail],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::char('r')],
-        label: "r",
-        description: "Rename",
-        action: Action::Rename,
-        modes: &[Picker],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::char('d')],
-        label: "d",
-        description: "Delete",
-        action: Action::Delete,
-        modes: &[List, Detail, Picker],
-        show: Footer,
-        short: None,
-    },
+    bind(&[Key::char('n')], "n", "New", Action::New, &[List, Picker]),
+    bind(&[Key::char('e')], "e", "Edit", Action::Edit, &[List, Detail]),
+    bind(&[Key::char('r')], "r", "Rename", Action::Rename, &[Picker]),
+    bind(&[Key::char('d')], "d", "Delete", Action::Delete, &[List, Detail, Picker]),
     // The footer has no room left in the list and detail views; it's in
     // the help overlay, and Ctrl-g in the editor is in that footer.
-    Binding {
-        keys: &[Key::char('g')],
-        label: "g",
-        description: "Password generator",
-        action: Action::Generate,
-        modes: &[List, Detail],
-        show: Show::Help,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::char('i')],
-        label: "i",
-        description: "Import from CSV",
-        action: Action::Import,
-        modes: &[List, Detail],
-        show: Show::Help,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::char('x')],
-        label: "x",
-        description: "Export to CSV",
-        action: Action::Export,
-        modes: &[List, Detail],
-        show: Show::Help,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::char('s')],
-        label: "s",
-        description: "Vault settings",
-        action: Action::Settings,
-        modes: &[List, Detail],
-        show: Show::Help,
-        short: None,
-    },
+    bind(&[Key::char('g')], "g", "Password generator", Action::Generate, &[List, Detail]).help(),
+    bind(&[Key::char('i')], "i", "Import from CSV", Action::Import, &[List, Detail]).help(),
+    bind(&[Key::char('x')], "x", "Export to CSV", Action::Export, &[List, Detail]).help(),
+    bind(&[Key::char('s')], "s", "Vault settings", Action::Settings, &[List, Detail]).help(),
     // -- Secrets --------------------------------------------------------------
-    Binding {
-        keys: &[Key::char(' ')],
-        label: "Space",
-        description: "Show/hide",
-        action: Action::ToggleReveal,
-        modes: &[Detail],
-        show: Footer,
-        short: Some("Show"),
-    },
-    Binding {
-        keys: &[Key::ctrl('r')],
-        label: "Ctrl-r",
-        description: "Show/hide",
-        action: Action::ToggleRevealInput,
-        modes: &[Unlock, Edit, Dialog, Settings],
-        show: Footer,
-        short: None,
-    },
+    bind(&[Key::char(' ')], "Space", "Show/hide", Action::ToggleReveal, &[Detail]).short("Show"),
+    bind(&[Key::ctrl('r')], "Ctrl-r", "Show/hide", Action::ToggleRevealInput, &[Unlock, Edit, Dialog, Settings]),
     // -- Locking and switching ------------------------------------------------
-    Binding {
-        keys: &[Key::char('L')],
-        label: "L",
-        description: "Lock",
-        action: Action::Lock,
-        modes: &[List, Detail],
-        show: Footer,
-        short: None,
-    },
+    bind(&[Key::char('L')], "L", "Lock", Action::Lock, &[List, Detail]),
     // -- Quitting and help ----------------------------------------------------
-    Binding {
-        keys: &[Key::char('q')],
-        label: "q",
-        description: "Quit",
-        action: Action::Quit,
-        modes: &[List, Detail],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::char('q'), Key::plain(KeyCode::Esc)],
-        label: "q/Esc",
-        description: "Quit",
-        action: Action::Quit,
-        modes: &[Picker],
-        show: Footer,
-        short: None,
-    },
+    bind(&[Key::char('q')], "q", "Quit", Action::Quit, &[List, Detail]),
+    bind(&[Key::char('q'), Key::plain(Esc)], "q/Esc", "Quit", Action::Quit, &[Picker]),
     // `q` must stay typeable on the unlock screen, so only Esc quits there.
-    Binding {
-        keys: &[Key::plain(KeyCode::Esc)],
-        label: "Esc",
-        description: "Quit",
-        action: Action::Quit,
-        modes: &[Unlock],
-        show: Footer,
-        short: None,
-    },
+    bind(&[Key::plain(Esc)], "Esc", "Quit", Action::Quit, &[Unlock]),
     // After Quit, so that when the footer is short of room it drops this
     // rather than Quit.
-    Binding {
-        keys: &[Key::char('V')],
-        label: "V",
-        description: "Vaults",
-        action: Action::SwitchVault,
-        modes: &[List, Detail],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::plain(KeyCode::Tab)],
-        label: "Tab",
-        description: "Vaults",
-        action: Action::SwitchVault,
-        modes: &[Unlock],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[Key::char('?'), Key::plain(KeyCode::F(1))],
-        label: "?",
-        description: "Help",
-        action: Action::Help,
-        modes: &[Picker, List, Detail, Preview],
-        show: Footer,
-        short: None,
-    },
+    bind(&[Key::char('V')], "V", "Vaults", Action::SwitchVault, &[List, Detail]),
+    bind(&[Key::plain(Tab)], "Tab", "Vaults", Action::SwitchVault, &[Unlock]),
+    bind(&[Key::char('?'), Key::plain(F(1))], "?", "Help", Action::Help, &[Picker, List, Detail, Preview]),
     // `?` must stay typeable in text fields, so they use F1.
-    Binding {
-        keys: &[Key::plain(KeyCode::F(1))],
-        label: "F1",
-        description: "Help",
-        action: Action::Help,
-        modes: &[Unlock, Search, Edit, Dialog, Generator, Settings],
-        show: Footer,
-        short: None,
-    },
-    Binding {
-        keys: &[
-            Key::plain(KeyCode::Esc),
-            Key::char('?'),
-            Key::char('q'),
-            Key::plain(KeyCode::F(1)),
-        ],
-        label: "Esc",
-        description: "Close help",
-        action: Action::CloseHelp,
-        modes: &[Help],
-        show: Footer,
-        short: None,
-    },
+    bind(
+        &[Key::plain(F(1))],
+        "F1",
+        "Help",
+        Action::Help,
+        &[Unlock, Search, Edit, Dialog, Generator, Settings],
+    ),
+    bind(
+        &[Key::plain(Esc), Key::char('?'), Key::char('q'), Key::plain(F(1))],
+        "Esc",
+        "Close help",
+        Action::CloseHelp,
+        &[Help],
+    ),
     // Ctrl-C always quits, even while typing.
-    Binding {
-        keys: &[Key::ctrl('c')],
-        label: "Ctrl-c",
-        description: "Quit",
-        action: Action::Quit,
-        modes: &Mode::ALL,
-        show: Show::Help,
-        short: None,
-    },
+    bind(&[Key::ctrl('c')], "Ctrl-c", "Quit", Action::Quit, &Mode::ALL).help(),
 ];
+
+/// The modes with a focusable form, which share Tab / Shift-Tab.
+const FORMS: &[Mode] = &[Edit, Dialog, Generator, Settings];
 
 /// The action bound to `event` in `mode`, if any.
 #[must_use]
